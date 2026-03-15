@@ -12,13 +12,13 @@ from fast_foto_forensics.pipeline import (
     rewrite_sidecars,
     run_pipeline,
 )
-from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBackend, VisionBackend
 from fast_foto_forensics.search import (
     DuckDuckGoSearchProvider,
     SearchProvider,
     StaticSearchProvider,
 )
 from fast_foto_forensics.synthesis import HeuristicSynthesisBackend
+from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBackend, VisionBackend
 
 
 def build_parser() -> argparse.ArgumentParser:

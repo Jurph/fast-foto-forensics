@@ -9,12 +9,16 @@ from pathlib import Path
 import pytest
 
 from fast_foto_forensics.models import EvidenceObservation, VisionResult
+from fast_foto_forensics.storage import RunStore
 from fast_foto_forensics.vision import (
     FilenameVisionBackend,
     OllamaVisionBackend,
     StaticVisionBackend,
     VisionBackend,
     VisionExtractionError,
+    enrich_observations,
+    enrich_single,
+    extract_with_cache,
 )
 
 
@@ -275,9 +279,6 @@ class TestOllamaVisionBackend:
 # ---------------------------------------------------------------------------
 # extract_with_cache tests (issue #7)
 # ---------------------------------------------------------------------------
-
-from fast_foto_forensics.vision import enrich_single, enrich_observations, extract_with_cache
-from fast_foto_forensics.storage import RunStore
 
 
 class TestExtractWithCache:
