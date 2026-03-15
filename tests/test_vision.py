@@ -255,6 +255,22 @@ class TestOllamaVisionBackend:
         assert result.vendor is None
         assert result.object_class is None
 
+    def test_missing_ollama_gives_actionable_error(self, tmp_path, monkeypatch) -> None:
+        """When ollama is not installed, the error message tells you how to fix it."""
+        backend = OllamaVisionBackend()
+        obs = self._observation_with_real_file(tmp_path)
+
+        def fake_call_ollama(**kwargs):
+            raise VisionExtractionError(
+                "ollama package not installed. Install with: "
+                "pip install fast-foto-forensics[vision_ollama]"
+            )
+
+        monkeypatch.setattr(backend, "_call_ollama", fake_call_ollama)
+
+        with pytest.raises(VisionExtractionError, match="vision_ollama"):
+            backend.extract(obs)
+
 
 # ---------------------------------------------------------------------------
 # Ollama integration test (issue #11)

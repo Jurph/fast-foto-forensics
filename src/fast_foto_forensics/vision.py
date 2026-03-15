@@ -100,7 +100,7 @@ class OllamaVisionBackend:
             ollama_module: Any = importlib.import_module("ollama")
         except ImportError as exc:
             raise VisionExtractionError(
-                "ollama package not installed. Install with: pip install ollama>=0.4.0"
+                "ollama package not installed. Install with: pip install fast-foto-forensics[vision_ollama]"
             ) from exc
         return ollama_module.chat(**kwargs)
 
