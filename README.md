@@ -3,63 +3,7 @@
 [![CircleCI](https://dl.circleci.com/status-badge/img/gh/Jurph/fast-foto-forensics/tree/main.svg?style=shield)](https://dl.circleci.com/status-badge/redirect/gh/Jurph/fast-foto-forensics/tree/main)
 [![codecov](https://codecov.io/gh/Jurph/fast-foto-forensics/branch/main/graph/badge.svg)](https://codecov.io/gh/Jurph/fast-foto-forensics)
 
-Fast Foto Forensics is a project to [TODO].
-
-CircleCI is the active CI for this repo, and Codecov is the public coverage dashboard. The
-GitHub Actions workflow remains in-tree only as a disabled template for future repos.
-See [docs/2026-03-15-circleci-codecov-setup.md](docs/2026-03-15-circleci-codecov-setup.md) for
-the service-side setup steps after the GitHub remote exists.
-
-The default workflow is intentionally opinionated:
-- `uv` for environment and package management
-- `pytest` for tests
-- `ruff` for linting and formatting
-- `mypy` for gradual typing
-
-The README still shows a `pip` fallback because that is part of being a good citizen in the wider Python community.
-
-## What this template standardizes
-
-- `src/` layout for import discipline
-- `uv` as the default environment/package workflow
-- `pytest` as the default test runner
-- `ruff` for linting and formatting
-- `mypy` for gradual typing
-- one obvious place for project-specific notes
-- one optional personal growth checklist that stays local by default
-
-## Quick start
-
-1. Create a new project from the template:
-
-```bash
-python deploy.py finnegan
-```
-
-2. Change into the new repo.
-3. Follow the install instructions below.
-4. Run the standard checks:
-
-```bash
-uv run --extra dev pytest
-uv run --extra dev pytest --cov=src/fast_foto_forensics --cov-report=term
-uv run --extra dev ruff check --no-cache src tests
-uv run --extra dev ruff format --check src tests
-uv run --extra dev mypy src
-uv run fast-foto-forensics
-```
-
-## Template deployment
-
-`deploy.py` is part of the template factory. It creates a sibling folder next to the template, copies the scaffold, renames the package, initializes git, and rewrites the most obvious placeholders. It does not get copied into the generated repo.
-
-Examples:
-
-```bash
-python deploy.py finnegan
-python deploy.py orbital-radio --dry-run
-python deploy.py old-project --force
-```
+Fast Foto Forensics is a project to ingest images and accumulate first-party or best-guess datasheets for each electronic device in the images. 
 
 ## Install
 
