@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from fast_foto_forensics.main import main
+from fast_foto_forensics.vision import OllamaVisionBackend
 
 
 def test_cli_run_command_creates_run_directory() -> None:
@@ -82,3 +84,34 @@ def test_cli_compose_command_writes_summary() -> None:
 
     assert composed_path.exists()
     assert "Linksys WRT54G" in composed_path.read_text(encoding="utf-8")
+
+
+def test_cli_run_with_ollama_backend_flag() -> None:
+    """--vision-backend=ollama should select OllamaVisionBackend."""
+    input_dir = Path(".tmp") / "cli-ollama-case"
+    output_dir = Path(".tmp") / "cli-ollama-output"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "001-wrt54g-router.jpg").write_bytes(b"router")
+
+    # Patch OllamaVisionBackend.extract to behave like FilenameVisionBackend
+    # so we don't need a real Ollama server
+    from fast_foto_forensics.vision import FilenameVisionBackend
+
+    filename_backend = FilenameVisionBackend()
+    with patch.object(OllamaVisionBackend, "extract", side_effect=filename_backend.extract):
+        exit_code = main(
+            [
+                "run",
+                str(input_dir),
+                "--output",
+                str(output_dir),
+                "--run-label",
+                "ollama-demo",
+                "--vision-backend",
+                "ollama",
+            ]
+        )
+
+    assert exit_code == 0
+    assert (output_dir / "ollama-demo" / "reports" / "report.md").exists()

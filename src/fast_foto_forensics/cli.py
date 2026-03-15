@@ -12,7 +12,7 @@ from fast_foto_forensics.pipeline import (
     rewrite_sidecars,
     run_pipeline,
 )
-from fast_foto_forensics.vision import FilenameVisionBackend
+from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBackend, VisionBackend
 from fast_foto_forensics.search import (
     DuckDuckGoSearchProvider,
     SearchProvider,
@@ -31,6 +31,13 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--output", required=True)
     run_parser.add_argument("--run-label", default="run-001")
     run_parser.add_argument("--profile", default="default")
+    run_parser.add_argument(
+        "--vision-backend",
+        choices=("filename", "ollama"),
+        default="filename",
+        help="Vision backend: filename (heuristic) or ollama (real model)",
+    )
+    run_parser.add_argument("--vision-model", default="qwen2.5vl:7b", help="Ollama model name")
     run_parser.add_argument("--search-provider", choices=("static", "duckduckgo"), default="static")
     run_parser.add_argument("--proxy")
     run_parser.add_argument("--offline", action="store_true")
@@ -61,6 +68,12 @@ def run_cli(argv: list[str] | None = None) -> int:
     args = parser.parse_args(raw_args)
 
     if args.command == "run":
+        vision_backend: VisionBackend
+        if args.vision_backend == "ollama":
+            vision_backend = OllamaVisionBackend(model=args.vision_model)
+        else:
+            vision_backend = FilenameVisionBackend()
+
         search_provider: SearchProvider
         if args.offline or args.search_provider == "static":
             search_provider = StaticSearchProvider(fixtures={})
@@ -70,11 +83,13 @@ def run_cli(argv: list[str] | None = None) -> int:
             input_path=Path(args.input_path),
             output_root=Path(args.output),
             run_label=args.run_label,
-            vision_backend=FilenameVisionBackend(),
+            vision_backend=vision_backend,
             search_provider=search_provider,
             synthesis_backend=HeuristicSynthesisBackend(),
         )
         print(f"Run complete: {result.run_dir}")
+        print(f"Report: {result.report_path}")
+        print(f"Sidecars: {len(result.sidecar_paths)} written")
         return 0
 
     if args.command == "worker":
