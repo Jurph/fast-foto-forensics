@@ -3,7 +3,7 @@
 [![CircleCI](https://dl.circleci.com/status-badge/img/gh/Jurph/fast-foto-forensics/tree/main.svg?style=shield)](https://dl.circleci.com/status-badge/redirect/gh/Jurph/fast-foto-forensics/tree/main)
 [![codecov](https://codecov.io/gh/Jurph/fast-foto-forensics/branch/main/graph/badge.svg)](https://codecov.io/gh/Jurph/fast-foto-forensics)
 
-Fast Foto Forensics is a project to ingest images and accumulate first-party or best-guess datasheets for each electronic device in the images. 
+Fast Foto Forensics is a project to ingest images and accumulate first-party or best-guess datasheets for each electronic device in the images. Shibboleth.
 
 ## Install
 
