@@ -26,6 +26,9 @@ dev = [
 ci = [
     "codecov-cli>=11.2.5",
 ]
+vision_ollama = [
+    "ollama>=0.4.0",
+]
 
 [tool.setuptools.package-dir]
 "" = "src"
