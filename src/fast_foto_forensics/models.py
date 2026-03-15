@@ -99,6 +99,7 @@ class VisionResult:
     vendor: str | None = None
     object_class: str | None = None
     detected_labels: list[str] = field(default_factory=list)
+    confidence: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the result into a JSON-friendly dictionary."""
@@ -114,6 +115,7 @@ class VisionResult:
             "vendor": self.vendor,
             "object_class": self.object_class,
             "detected_labels": list(self.detected_labels),
+            "confidence": self.confidence,
         }
 
     @classmethod
@@ -137,6 +139,7 @@ class VisionResult:
             detected_labels=_require_list(data, "detected_labels")
             if "detected_labels" in data
             else [],
+            confidence=float(data.get("confidence", 0.0)),
         )
 
 

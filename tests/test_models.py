@@ -135,3 +135,31 @@ def test_vision_result_from_dict_requires_core_identity_fields() -> None:
 
     with pytest.raises(ValueError, match="evidence_id"):
         VisionResult.from_dict(payload)
+
+
+def test_vision_result_confidence_round_trips() -> None:
+    """Confidence field should survive serialization and default to 0.0."""
+    result = VisionResult(
+        evidence_id="img-005",
+        source_path="evidence/gpu.jpg",
+        source_sha256="aabb",
+        backend_name="ollama",
+        model_name="qwen2.5vl:7b",
+        caption="A GPU.",
+        ocr_text="GTX 1080",
+        candidate_identifiers=["GTX 1080"],
+        vendor="NVIDIA",
+        object_class="gpu",
+        detected_labels=["gpu"],
+        confidence=0.85,
+    )
+    payload = result.to_dict()
+    assert payload["confidence"] == 0.85
+
+    restored = VisionResult.from_dict(payload)
+    assert restored.confidence == 0.85
+
+    # Default when missing from payload
+    del payload["confidence"]
+    restored_default = VisionResult.from_dict(payload)
+    assert restored_default.confidence == 0.0
