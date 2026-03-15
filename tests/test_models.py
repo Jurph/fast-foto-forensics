@@ -11,6 +11,7 @@ from fast_foto_forensics.models import (
     ImageTagSet,
     ItemDatasheet,
     SearchHit,
+    VisionResult,
 )
 from fast_foto_forensics.tagging import build_tag_set
 
@@ -75,3 +76,62 @@ def test_build_tag_set_combines_datasheet_and_search_context() -> None:
     assert "gtx 480" in tags.tags
     assert tags.caption == observation.caption
     assert tags.search_terms[0] == "GTX 480 release date"
+
+
+def test_vision_result_round_trips_through_dict() -> None:
+    """Vision results should preserve structured fields through artifact storage."""
+    result = VisionResult(
+        evidence_id="img-001",
+        source_path="evidence/router.jpg",
+        source_sha256="deadbeef",
+        backend_name="ollama",
+        model_name="qwen2.5vl:7b",
+        caption="A blue wireless router on a shelf.",
+        ocr_text="WRT54G",
+        candidate_identifiers=["WRT54G"],
+        vendor="Linksys",
+        object_class="wireless router",
+        detected_labels=["router", "wireless"],
+    )
+
+    restored = VisionResult.from_dict(result.to_dict())
+
+    assert restored == result
+
+
+def test_vision_result_from_dict_accepts_optional_fields_as_missing() -> None:
+    """Vendor and object class should remain optional when not identified."""
+    payload = {
+        "evidence_id": "img-002",
+        "source_path": "evidence/unknown.jpg",
+        "source_sha256": "beadfeed",
+        "backend_name": "static",
+        "model_name": "fixture",
+        "caption": "An unknown expansion card.",
+        "ocr_text": "",
+        "candidate_identifiers": [],
+        "detected_labels": ["card"],
+    }
+
+    restored = VisionResult.from_dict(payload)
+
+    assert restored.vendor is None
+    assert restored.object_class is None
+    assert restored.detected_labels == ["card"]
+
+
+def test_vision_result_from_dict_requires_core_identity_fields() -> None:
+    """Persisted vision artifacts should fail fast when required fields are missing."""
+    payload = {
+        "source_path": "evidence/missing-id.jpg",
+        "source_sha256": "c0ffee",
+        "backend_name": "ollama",
+        "model_name": "qwen2.5vl:7b",
+        "caption": "A blurry GPU photo.",
+        "ocr_text": "GTX 480",
+        "candidate_identifiers": ["GTX 480"],
+        "detected_labels": ["gpu"],
+    }
+
+    with pytest.raises(ValueError, match="evidence_id"):
+        VisionResult.from_dict(payload)
