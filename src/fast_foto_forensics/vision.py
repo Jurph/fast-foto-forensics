@@ -124,7 +124,12 @@ class OllamaVisionBackend:
                     }
                 ],
             )
-            raw = response.message.content
+            raw = response.message.content.strip()
+            # Strip markdown code fences that models often wrap JSON in
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                if raw.endswith("```"):
+                    raw = raw[:-3].strip()
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError as exc:
