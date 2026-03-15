@@ -85,6 +85,62 @@ class EvidenceObservation:
 
 
 @dataclass(slots=True)
+class VisionResult:
+    """Structured output from a vision extraction backend."""
+
+    evidence_id: str
+    source_path: str
+    source_sha256: str
+    backend_name: str
+    model_name: str
+    caption: str
+    ocr_text: str
+    candidate_identifiers: list[str] = field(default_factory=list)
+    vendor: str | None = None
+    object_class: str | None = None
+    detected_labels: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the result into a JSON-friendly dictionary."""
+        return {
+            "evidence_id": self.evidence_id,
+            "source_path": self.source_path,
+            "source_sha256": self.source_sha256,
+            "backend_name": self.backend_name,
+            "model_name": self.model_name,
+            "caption": self.caption,
+            "ocr_text": self.ocr_text,
+            "candidate_identifiers": list(self.candidate_identifiers),
+            "vendor": self.vendor,
+            "object_class": self.object_class,
+            "detected_labels": list(self.detected_labels),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> VisionResult:
+        """Rebuild a vision result from persisted JSON-friendly data."""
+        return cls(
+            evidence_id=_require_str(data, "evidence_id"),
+            source_path=_require_str(data, "source_path"),
+            source_sha256=_require_str(data, "source_sha256"),
+            backend_name=_require_str(data, "backend_name"),
+            model_name=_require_str(data, "model_name"),
+            caption=_require_str(data, "caption"),
+            ocr_text=_optional_str(data, "ocr_text") or "",
+            candidate_identifiers=(
+                _require_list(data, "candidate_identifiers")
+                if "candidate_identifiers" in data
+                else []
+            ),
+            vendor=_optional_str(data, "vendor"),
+            object_class=_optional_str(data, "object_class"),
+            detected_labels=_require_list(data, "detected_labels")
+            if "detected_labels" in data
+            else [],
+        )
+
+
+@dataclass(slots=True)
 class SearchHit:
     """A normalized search result."""
 

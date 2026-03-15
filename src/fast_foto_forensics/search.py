@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
 from fast_foto_forensics.models import SearchHit
+
+
+class SearchProviderError(RuntimeError):
+    """Raised when a live search provider fails predictably."""
 
 
 class SearchProvider(Protocol):
@@ -50,19 +54,65 @@ class DuckDuckGoSearchProvider:
             return self.client
         return httpx.Client(proxy=self.proxy_url, timeout=10.0)
 
+    def _related_topic_rows(self, rows: list[Any]) -> list[dict[str, str]]:
+        """Flatten nested DuckDuckGo topic rows into simple text/url pairs."""
+        flattened: list[dict[str, str]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            text = row.get("Text")
+            url = row.get("FirstURL")
+            if isinstance(text, str) and isinstance(url, str):
+                flattened.append({"Text": text, "FirstURL": url})
+                continue
+            topics = row.get("Topics")
+            if isinstance(topics, list):
+                flattened.extend(self._related_topic_rows(topics))
+        return flattened
+
+    def _topic_hit(
+        self,
+        query: str,
+        index: int,
+        topic_text: str,
+        topic_url: str,
+    ) -> SearchHit | None:
+        """Build a normalized hit from one topic row, skipping unusable rows."""
+        snippet = topic_text.strip()
+        url = topic_url.strip()
+        if not snippet or not url:
+            return None
+        return SearchHit(
+            hit_id=f"duckduckgo-{index:03d}",
+            provider="duckduckgo",
+            query=query,
+            title=query,
+            snippet=snippet,
+            url=url,
+        )
+
     def search(self, query: str) -> list[SearchHit]:
         client = self._client()
-        response = client.get(
-            "https://api.duckduckgo.com/",
-            params={
-                "q": query,
-                "format": "json",
-                "no_html": "1",
-                "skip_disambig": "1",
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            response = client.get(
+                "https://api.duckduckgo.com/",
+                params={
+                    "q": query,
+                    "format": "json",
+                    "no_html": "1",
+                    "skip_disambig": "1",
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise SearchProviderError(
+                f"duckduckgo search failed for query {query!r}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise SearchProviderError(
+                f"duckduckgo search failed for query {query!r}: payload was not an object"
+            )
 
         hits: list[SearchHit] = []
         abstract_text = payload.get("AbstractText", "").strip()
@@ -79,16 +129,17 @@ class DuckDuckGoSearchProvider:
                 )
             )
 
-        for index, topic in enumerate(payload.get("RelatedTopics", []), start=1):
-            if isinstance(topic, dict) and "Text" in topic and "FirstURL" in topic:
-                hits.append(
-                    SearchHit(
-                        hit_id=f"duckduckgo-{index:03d}",
-                        provider="duckduckgo",
-                        query=query,
-                        title=query,
-                        snippet=topic["Text"].strip(),
-                        url=topic["FirstURL"].strip(),
-                    )
-                )
+        related_topics = payload.get("RelatedTopics", [])
+        if not isinstance(related_topics, list):
+            related_topics = []
+        start_index = len(hits)
+        for offset, topic in enumerate(self._related_topic_rows(related_topics), start=1):
+            hit = self._topic_hit(
+                query=query,
+                index=start_index + offset,
+                topic_text=topic["Text"],
+                topic_url=topic["FirstURL"],
+            )
+            if hit is not None:
+                hits.append(hit)
         return hits
