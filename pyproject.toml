@@ -37,6 +37,7 @@ where = ["src"]
 addopts = ["-p", "no:cacheprovider"]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["slow: marks tests that require external services (deselect with '-m \"not slow\"')"]
 
 [tool.uv]
 package = true

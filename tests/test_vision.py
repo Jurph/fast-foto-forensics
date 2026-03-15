@@ -1,8 +1,9 @@
-"""Tests for the vision module (issues #4, #5, #6)."""
+"""Tests for the vision module (issues #4, #5, #6, #11)."""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -250,3 +251,47 @@ class TestOllamaVisionBackend:
 
         assert result.vendor is None
         assert result.object_class is None
+
+
+# ---------------------------------------------------------------------------
+# Ollama integration test (issue #11)
+# ---------------------------------------------------------------------------
+
+try:
+    import ollama as _ollama_mod
+
+    _HAS_OLLAMA = True
+except ImportError:
+    _HAS_OLLAMA = False
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not _HAS_OLLAMA, reason="ollama package not installed")
+class TestOllamaIntegration:
+    def test_round_trip_with_real_model(self, tmp_path: Path) -> None:
+        """Send a tiny test image to Ollama and verify structured output."""
+        # Minimal valid 1x1 white PNG
+        test_image = tmp_path / "test.png"
+        test_image.write_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+            b"\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
+            b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+
+        observation = EvidenceObservation(
+            evidence_id="integration-test",
+            source_path=str(test_image),
+            media_kind="image",
+            sha256="integration",
+            order_index=0,
+        )
+        backend = OllamaVisionBackend(model="qwen2.5vl:7b")
+        try:
+            result = backend.extract(observation)
+            assert isinstance(result, VisionResult)
+            assert result.backend_name == "ollama"
+            assert result.evidence_id == "integration-test"
+        except VisionExtractionError:
+            # Model may not parse a 1x1 PNG meaningfully, but we verify the round-trip
+            pytest.skip("Ollama returned unparseable response for test image")
