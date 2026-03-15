@@ -8,10 +8,13 @@ version = "0.1.0"
 description = "Describe the project here."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "httpx[socks]>=0.28.0",
+]
 
 [project.scripts]
 fast-foto-forensics = "fast_foto_forensics.main:main"
+fff = "fast_foto_forensics.main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -27,6 +30,7 @@ dev = [
 where = ["src"]
 
 [tool.pytest.ini_options]
+addopts = ["-p", "no:cacheprovider"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
@@ -36,6 +40,8 @@ package = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = [".tmp"]
+force-exclude = true
 
 [tool.ruff.lint]
 select = [

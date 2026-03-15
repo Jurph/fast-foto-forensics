@@ -12,6 +12,10 @@ htmlcov/
 # Virtual environments
 .venv/
 venv/
+.uv-cache/
+.uv-python/
+.scratch/
+.tmp/
 
 # Local environment and machine-specific files
 .env
@@ -30,6 +34,16 @@ Thumbs.db
 
 # Personal growth notes copied from the template; keep local by default
 Growth-Is-Not-Optional-Jurphs-SW-Eng-Journey.md
+
+# Model weights (multi-GB files live on X:\models\fast-foto-forensics\)
+models/*.gguf
+models/*.bin
+models/*.safetensors
+models/*.pt
+models/*.pth
+models/*.onnx
+models/florence-2-base/
+models/qwen2.5-vl-7b-gguf/
 
 # Claude Code
 .claude/

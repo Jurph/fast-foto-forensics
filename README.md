@@ -33,10 +33,10 @@ python deploy.py finnegan
 4. Run the standard checks:
 
 ```bash
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy src
+uv run --extra dev pytest
+uv run --extra dev ruff check --no-cache src tests
+uv run --extra dev ruff format --check src tests
+uv run --extra dev mypy src
 uv run fast-foto-forensics
 ```
 
@@ -61,6 +61,22 @@ If you are using `uv`:
 ```bash
 uv sync --extra dev
 ```
+
+On Windows, this repo includes a wrapper that keeps uv's cache and managed Python inside the
+repository instead of relying on user-level AppData paths:
+
+```bat
+.\scripts\uvw.cmd sync --extra dev
+.\scripts\uvw.cmd run --extra dev pytest
+```
+
+The first `sync` may still need normal network access to download Python or wheels. After that,
+the wrapper keeps the repo self-contained.
+
+The wrapper intentionally does **not** override `TMP` or `TEMP`. On this machine, Python's
+`tempfile.mkdtemp()` and `TemporaryDirectory()` can create Windows directories that immediately
+reject child files and folders. If you need repo-local scratch space, use a normal directory such
+as `.scratch/` created with `Path.mkdir()` and a unique name, not the `tempfile` directory APIs.
 
 If you are using `pip`:
 
@@ -124,9 +140,9 @@ you may need a few additional setup steps.
 
 ```bash
 uv sync --extra dev
-uv run pytest
-uv run ruff check .
-uv run ruff format .
-uv run mypy src
+uv run --extra dev pytest
+uv run --extra dev ruff check --no-cache src tests
+uv run --extra dev ruff format src tests
+uv run --extra dev mypy src
 uv run fast-foto-forensics
 ```
