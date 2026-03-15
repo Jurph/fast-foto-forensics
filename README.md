@@ -1,6 +1,14 @@
 # Fast Foto Forensics
 
+[![CircleCI](https://dl.circleci.com/status-badge/img/gh/Jurph/fast-foto-forensics/tree/main.svg?style=shield)](https://dl.circleci.com/status-badge/redirect/gh/Jurph/fast-foto-forensics/tree/main)
+[![codecov](https://codecov.io/gh/Jurph/fast-foto-forensics/branch/main/graph/badge.svg)](https://codecov.io/gh/Jurph/fast-foto-forensics)
+
 Fast Foto Forensics is a project to [TODO].
+
+CircleCI is the active CI for this repo, and Codecov is the public coverage dashboard. The
+GitHub Actions workflow remains in-tree only as a disabled template for future repos.
+See [docs/2026-03-15-circleci-codecov-setup.md](docs/2026-03-15-circleci-codecov-setup.md) for
+the service-side setup steps after the GitHub remote exists.
 
 The default workflow is intentionally opinionated:
 - `uv` for environment and package management
@@ -34,6 +42,7 @@ python deploy.py finnegan
 
 ```bash
 uv run --extra dev pytest
+uv run --extra dev pytest --cov=src/fast_foto_forensics --cov-report=term
 uv run --extra dev ruff check --no-cache src tests
 uv run --extra dev ruff format --check src tests
 uv run --extra dev mypy src
@@ -60,6 +69,7 @@ If you are using `uv`:
 
 ```bash
 uv sync --extra dev
+uv sync --extra dev --extra ci
 ```
 
 On Windows, this repo includes a wrapper that keeps uv's cache and managed Python inside the
@@ -67,6 +77,7 @@ repository instead of relying on user-level AppData paths:
 
 ```bat
 .\scripts\uvw.cmd sync --extra dev
+.\scripts\uvw.cmd sync --extra dev --extra ci
 .\scripts\uvw.cmd run --extra dev pytest
 ```
 
@@ -140,7 +151,9 @@ you may need a few additional setup steps.
 
 ```bash
 uv sync --extra dev
+uv sync --extra dev --extra ci
 uv run --extra dev pytest
+uv run --extra dev pytest --cov=src/fast_foto_forensics --cov-report=term
 uv run --extra dev ruff check --no-cache src tests
 uv run --extra dev ruff format src tests
 uv run --extra dev mypy src

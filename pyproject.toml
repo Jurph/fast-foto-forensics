@@ -20,7 +20,11 @@ fff = "fast_foto_forensics.main:main"
 dev = [
     "mypy>=1.18.0",
     "pytest>=8.4.0",
+    "pytest-cov>=7.0.0",
     "ruff>=0.13.0",
+]
+ci = [
+    "codecov-cli>=11.2.5",
 ]
 
 [tool.setuptools.package-dir]

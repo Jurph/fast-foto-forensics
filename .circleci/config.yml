@@ -1,0 +1,64 @@
+version: 2.1
+
+jobs:
+  test:
+    docker:
+      - image: cimg/python:3.11
+
+    steps:
+      - checkout
+
+      - restore_cache:
+          keys:
+            - venv-v1-{{ checksum "pyproject.toml" }}
+            - venv-v1-
+
+      - run:
+          name: Install dependencies
+          command: |
+            python -m venv venv
+            venv/bin/pip install --upgrade pip
+            venv/bin/pip install -e ".[dev,ci]"
+
+      - save_cache:
+          key: venv-v1-{{ checksum "pyproject.toml" }}
+          paths:
+            - venv
+
+      - run:
+          name: Run tests with coverage
+          command: |
+            mkdir -p test-results
+            source venv/bin/activate
+            pytest \
+              --cov=src/fast_foto_forensics \
+              --cov-report=xml:coverage.xml \
+              --cov-report=term \
+              --junitxml=test-results/junit.xml
+
+      - run:
+          name: Upload coverage to Codecov
+          command: |
+            source venv/bin/activate
+            if [ -z "${CODECOV_TOKEN:-}" ]; then
+              echo "CODECOV_TOKEN not set; skipping Codecov upload."
+            else
+              codecovcli do-upload \
+                --token="$CODECOV_TOKEN" \
+                --sha="$CIRCLE_SHA1" \
+                --git-service=github \
+                --slug=Jurph/fast-foto-forensics \
+                --plugin pycoverage \
+                --coverage-files-search-root-folder .
+            fi
+
+      - store_test_results:
+          path: test-results
+
+      - store_artifacts:
+          path: coverage.xml
+
+workflows:
+  test-workflow:
+    jobs:
+      - test
