@@ -20,7 +20,7 @@ from fast_foto_forensics.search import SearchProvider
 from fast_foto_forensics.storage import RunStore
 from fast_foto_forensics.synthesis import SynthesisBackend, synthesize_item
 from fast_foto_forensics.tagging import build_tag_set, write_tag_sidecar
-from fast_foto_forensics.vision import FilenameVisionBackend
+from fast_foto_forensics.vision import VisionBackend, enrich_observations
 
 
 @dataclass(slots=True)
@@ -85,13 +85,13 @@ def run_pipeline(
     input_path: Path,
     output_root: Path,
     run_label: str,
-    vision_backend: FilenameVisionBackend,
+    vision_backend: VisionBackend,
     search_provider: SearchProvider,
     synthesis_backend: SynthesisBackend,
 ) -> RunResult:
     """Run the local evidence pipeline and persist its outputs."""
     store = RunStore.create(output_root, run_label)
-    observations = [vision_backend.enrich(observation) for observation in ingest_path(input_path)]
+    observations = enrich_observations(list(ingest_path(input_path)), vision_backend, store)
     store.write_json_artifact(
         "observations.json",
         {"observations": [asdict(item) for item in observations]},

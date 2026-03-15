@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fast_foto_forensics.pipeline import FilenameVisionBackend, run_pipeline
+from fast_foto_forensics.pipeline import run_pipeline
+from fast_foto_forensics.vision import FilenameVisionBackend
 from fast_foto_forensics.search import StaticSearchProvider
 from fast_foto_forensics.synthesis import ReplaySynthesisBackend
 

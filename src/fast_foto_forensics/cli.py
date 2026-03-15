@@ -7,12 +7,12 @@ import sys
 from pathlib import Path
 
 from fast_foto_forensics.pipeline import (
-    FilenameVisionBackend,
     compose_runs,
     rerender_run,
     rewrite_sidecars,
     run_pipeline,
 )
+from fast_foto_forensics.vision import FilenameVisionBackend
 from fast_foto_forensics.search import (
     DuckDuckGoSearchProvider,
     SearchProvider,
