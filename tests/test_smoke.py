@@ -4,7 +4,9 @@ from fast_foto_forensics.main import main
 
 
 def test_main_runs(capsys) -> None:
-    """The starter CLI should print a placeholder message."""
-    main()
+    """Calling the entry point without arguments should show the top-level help."""
+    exit_code = main([])
     captured = capsys.readouterr()
-    assert "Replace this with your real entry point." in captured.out
+    assert exit_code == 0
+    assert "Fast Foto Forensics" in captured.out
+    assert "run" in captured.out

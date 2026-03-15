@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from fast_foto_forensics.pipeline import (
@@ -52,7 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
 def run_cli(argv: list[str] | None = None) -> int:
     """Execute the CLI for the provided argument vector."""
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_args = sys.argv[1:] if argv is None else argv
+    if not raw_args:
+        parser.print_help()
+        return 0
+
+    args = parser.parse_args(raw_args)
 
     if args.command == "run":
         search_provider: SearchProvider
