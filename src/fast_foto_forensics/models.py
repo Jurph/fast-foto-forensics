@@ -233,27 +233,6 @@ class EvidenceCluster:
 
 
 @dataclass(slots=True)
-class VisionResult:
-    """Raw output of one vision extraction pass.
-
-    Stub added by issue-4 branch. Will be replaced by #2's full
-    implementation with to_dict()/from_dict() and validation.
-    """
-
-    evidence_id: str
-    source_path: str
-    source_sha256: str
-    backend_name: str
-    model_name: str
-    caption: str
-    ocr_text: str
-    candidate_identifiers: list[str]
-    vendor: str | None
-    object_class: str | None
-    detected_labels: list[str]
-
-
-@dataclass(slots=True)
 class ItemDatasheet:
     """A structured summary of a likely identified object."""
 

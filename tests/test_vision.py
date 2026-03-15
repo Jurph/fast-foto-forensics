@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -202,10 +203,12 @@ class TestOllamaVisionBackend:
     def test_retries_once_on_bad_json(self, tmp_path, monkeypatch) -> None:
         backend = OllamaVisionBackend()
         obs = self._observation_with_real_file(tmp_path)
-        fake = _make_fake_chat([
-            "this is not json at all",
-            json.dumps(_VALID_OLLAMA_RESPONSE),
-        ])
+        fake = _make_fake_chat(
+            [
+                "this is not json at all",
+                json.dumps(_VALID_OLLAMA_RESPONSE),
+            ]
+        )
         monkeypatch.setattr(backend, "_call_ollama", fake)
 
         result = backend.extract(obs)
@@ -257,12 +260,7 @@ class TestOllamaVisionBackend:
 # Ollama integration test (issue #11)
 # ---------------------------------------------------------------------------
 
-try:
-    import ollama as _ollama_mod
-
-    _HAS_OLLAMA = True
-except ImportError:
-    _HAS_OLLAMA = False
+_HAS_OLLAMA = importlib.util.find_spec("ollama") is not None
 
 
 @pytest.mark.slow

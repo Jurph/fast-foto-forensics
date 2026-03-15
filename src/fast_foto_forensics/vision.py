@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import logging
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from fast_foto_forensics.models import EvidenceObservation, VisionResult
 
@@ -83,9 +84,7 @@ class StaticVisionBackend:
     def extract(self, observation: EvidenceObservation) -> VisionResult:
         result = self._fixtures.get(observation.evidence_id)
         if result is None:
-            raise VisionExtractionError(
-                f"no fixture for evidence_id={observation.evidence_id!r}"
-            )
+            raise VisionExtractionError(f"no fixture for evidence_id={observation.evidence_id!r}")
         return result
 
 
@@ -98,19 +97,17 @@ class OllamaVisionBackend:
     def _call_ollama(self, **kwargs):
         """Thin wrapper around ollama.chat() for monkeypatching in tests."""
         try:
-            import ollama
+            ollama_module: Any = importlib.import_module("ollama")
         except ImportError as exc:
             raise VisionExtractionError(
                 "ollama package not installed. Install with: pip install ollama>=0.4.0"
             ) from exc
-        return ollama.chat(**kwargs)
+        return ollama_module.chat(**kwargs)
 
     def extract(self, observation: EvidenceObservation) -> VisionResult:
         image_path = Path(observation.source_path)
         if not image_path.is_file():
-            raise VisionExtractionError(
-                f"Image file not found: {observation.source_path}"
-            )
+            raise VisionExtractionError(f"Image file not found: {observation.source_path}")
 
         image_bytes = image_path.read_bytes()
         image_b64 = base64.b64encode(image_bytes).decode("ascii")
@@ -154,5 +151,5 @@ class OllamaVisionBackend:
             )
 
         raise VisionExtractionError(
-            f"Failed to parse valid JSON from Ollama after 2 attempts"
+            "Failed to parse valid JSON from Ollama after 2 attempts"
         ) from last_error
