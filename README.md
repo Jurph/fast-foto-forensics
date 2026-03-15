@@ -27,6 +27,8 @@ repository instead of relying on user-level AppData paths:
 
 The first `sync` may still need normal network access to download Python or wheels. After that,
 the wrapper keeps the repo self-contained.
+For `run`, the wrapper also injects `--locked` so verification commands fail fast if `uv.lock`
+falls behind `pyproject.toml` instead of rewriting the lockfile during a test or lint pass.
 
 The wrapper intentionally does **not** override `TMP` or `TEMP`. On this machine, Python's
 `tempfile.mkdtemp()` and `TemporaryDirectory()` can create Windows directories that immediately
@@ -96,10 +98,10 @@ you may need a few additional setup steps.
 ```bash
 uv sync --extra dev
 uv sync --extra dev --extra ci
-uv run --extra dev pytest
-uv run --extra dev pytest --cov=src/fast_foto_forensics --cov-report=term
-uv run --extra dev ruff check --no-cache src tests
-uv run --extra dev ruff format src tests
-uv run --extra dev mypy src
-uv run fast-foto-forensics
+uv run --locked --extra dev pytest
+uv run --locked --extra dev pytest --cov=src/fast_foto_forensics --cov-report=term
+uv run --locked --extra dev ruff check --no-cache src tests
+uv run --locked --extra dev ruff format src tests
+uv run --locked --extra dev mypy src
+uv run --locked fast-foto-forensics
 ```

@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 set "REPO_ROOT=%~dp0.."
 for %%I in ("%REPO_ROOT%") do set "REPO_ROOT=%%~fI"
@@ -11,5 +11,15 @@ set "REPO_SCRATCH_DIR=%REPO_ROOT%\.scratch"
 
 if not exist "%REPO_SCRATCH_DIR%" mkdir "%REPO_SCRATCH_DIR%"
 
-uv %*
+if /I "%~1"=="run" (
+    if "%~2"=="" (
+        call uv run --locked
+    ) else (
+        set "RUN_ARGS=%*"
+        set "RUN_ARGS=!RUN_ARGS:* =!"
+        call uv run --locked !RUN_ARGS!
+    )
+) else (
+    uv %*
+)
 exit /b %ERRORLEVEL%

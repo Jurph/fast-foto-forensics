@@ -15,5 +15,11 @@ if (-not (Test-Path $env:REPO_SCRATCH_DIR)) {
     New-Item -ItemType Directory -Path $env:REPO_SCRATCH_DIR | Out-Null
 }
 
-& uv @CommandArgs
+$uvArgs = $CommandArgs
+if ($CommandArgs.Count -gt 0 -and $CommandArgs[0] -eq "run") {
+    $remainingArgs = if ($CommandArgs.Count -gt 1) { $CommandArgs[1..($CommandArgs.Count - 1)] } else { @() }
+    $uvArgs = @("run", "--locked") + $remainingArgs
+}
+
+& uv @uvArgs
 exit $LASTEXITCODE
