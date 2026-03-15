@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import logging
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from fast_foto_forensics.models import EvidenceObservation, VisionResult
+
+logger = logging.getLogger(__name__)
+
+_VISION_PROMPT = """\
+Examine this image carefully. Return ONLY a JSON object with these fields:
+- "caption": a one-sentence description of what you see
+- "ocr_text": all visible text, transcribed exactly as it appears
+- "candidate_identifiers": list of serial numbers, model numbers, or part numbers found
+- "vendor": manufacturer name if identifiable, otherwise ""
+- "object_class": general category (e.g. "wireless router", "GPU", "circuit board")
+- "detected_labels": list of all readable labels, markings, or stickers"""
 
 
 class VisionExtractionError(RuntimeError):
@@ -73,3 +87,72 @@ class StaticVisionBackend:
                 f"no fixture for evidence_id={observation.evidence_id!r}"
             )
         return result
+
+
+class OllamaVisionBackend:
+    """Send images to a local Ollama vision model and parse structured JSON."""
+
+    def __init__(self, model: str = "qwen2.5vl:7b") -> None:
+        self._model = model
+
+    def _call_ollama(self, **kwargs):
+        """Thin wrapper around ollama.chat() for monkeypatching in tests."""
+        try:
+            import ollama
+        except ImportError as exc:
+            raise VisionExtractionError(
+                "ollama package not installed. Install with: pip install ollama>=0.4.0"
+            ) from exc
+        return ollama.chat(**kwargs)
+
+    def extract(self, observation: EvidenceObservation) -> VisionResult:
+        image_path = Path(observation.source_path)
+        if not image_path.is_file():
+            raise VisionExtractionError(
+                f"Image file not found: {observation.source_path}"
+            )
+
+        image_bytes = image_path.read_bytes()
+        image_b64 = base64.b64encode(image_bytes).decode("ascii")
+
+        last_error: Exception | None = None
+        for attempt in range(2):
+            response = self._call_ollama(
+                model=self._model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": _VISION_PROMPT,
+                        "images": [image_b64],
+                    }
+                ],
+            )
+            raw = response.message.content
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                logger.warning(
+                    "Attempt %d: failed to parse JSON from Ollama response: %s",
+                    attempt + 1,
+                    exc,
+                )
+                continue
+
+            return VisionResult(
+                evidence_id=observation.evidence_id,
+                source_path=observation.source_path,
+                source_sha256=observation.sha256,
+                backend_name="ollama",
+                model_name=self._model,
+                caption=data.get("caption", ""),
+                ocr_text=data.get("ocr_text", ""),
+                candidate_identifiers=data.get("candidate_identifiers", []),
+                vendor=data.get("vendor", "") or None,
+                object_class=data.get("object_class", "") or None,
+                detected_labels=data.get("detected_labels", []),
+            )
+
+        raise VisionExtractionError(
+            f"Failed to parse valid JSON from Ollama after 2 attempts"
+        ) from last_error
