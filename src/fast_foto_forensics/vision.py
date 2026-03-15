@@ -153,3 +153,30 @@ class OllamaVisionBackend:
         raise VisionExtractionError(
             "Failed to parse valid JSON from Ollama after 2 attempts"
         ) from last_error
+
+
+def extract_with_cache(
+    observation: EvidenceObservation,
+    backend: VisionBackend,
+    store: Any,
+) -> VisionResult:
+    """Extract vision data, using the RunStore artifact cache when possible.
+
+    Cache validity requires the stored sha256 to match the current observation.
+    On a miss or mismatch the backend is called and the result is persisted.
+    """
+    cache_path = f"vision/{observation.evidence_id}.json"
+
+    try:
+        payload = store.read_json_artifact(cache_path)
+        cached = VisionResult.from_dict(payload)
+        if cached.source_sha256 == observation.sha256:
+            logger.debug("Cache hit for %s", observation.evidence_id)
+            return cached
+        logger.debug("Cache stale for %s (sha256 mismatch)", observation.evidence_id)
+    except (FileNotFoundError, ValueError, KeyError):
+        logger.debug("Cache miss for %s", observation.evidence_id)
+
+    result = backend.extract(observation)
+    store.write_json_artifact(cache_path, result.to_dict())
+    return result

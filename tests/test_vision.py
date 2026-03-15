@@ -273,6 +273,86 @@ class TestOllamaVisionBackend:
 
 
 # ---------------------------------------------------------------------------
+# extract_with_cache tests (issue #7)
+# ---------------------------------------------------------------------------
+
+from fast_foto_forensics.vision import extract_with_cache
+from fast_foto_forensics.storage import RunStore
+
+
+class TestExtractWithCache:
+    def _make_backend_and_obs(self) -> tuple:
+        fixture = VisionResult(
+            evidence_id="cache-001",
+            source_path="evidence/router.jpg",
+            source_sha256="sha_aaa",
+            backend_name="static",
+            model_name="static",
+            caption="A router.",
+            ocr_text="WRT54G",
+            candidate_identifiers=["WRT54G"],
+            vendor="Linksys",
+            object_class="wireless router",
+            detected_labels=["router"],
+        )
+        backend = StaticVisionBackend(fixtures={"cache-001": fixture})
+        obs = EvidenceObservation(
+            evidence_id="cache-001",
+            source_path="evidence/router.jpg",
+            media_kind="image",
+            sha256="sha_aaa",
+            order_index=0,
+        )
+        return backend, obs, fixture
+
+    def test_cache_miss_calls_backend_and_persists(self, tmp_path) -> None:
+        store = RunStore.from_run_dir(tmp_path / "run")
+        backend, obs, fixture = self._make_backend_and_obs()
+
+        result = extract_with_cache(obs, backend, store)
+
+        assert result.evidence_id == "cache-001"
+        assert result.caption == "A router."
+        # Verify artifact was written
+        cached = store.read_json_artifact("vision/cache-001.json")
+        assert cached["evidence_id"] == "cache-001"
+
+    def test_cache_hit_skips_backend(self, tmp_path) -> None:
+        store = RunStore.from_run_dir(tmp_path / "run")
+        backend, obs, fixture = self._make_backend_and_obs()
+
+        # Prime the cache
+        extract_with_cache(obs, backend, store)
+
+        # Replace backend with one that would fail
+        empty_backend = StaticVisionBackend(fixtures={})
+        result = extract_with_cache(obs, empty_backend, store)
+
+        assert result.evidence_id == "cache-001"
+        assert result.caption == "A router."
+
+    def test_cache_stale_on_sha256_mismatch(self, tmp_path) -> None:
+        store = RunStore.from_run_dir(tmp_path / "run")
+        backend, obs, fixture = self._make_backend_and_obs()
+
+        # Prime the cache
+        extract_with_cache(obs, backend, store)
+
+        # Change the observation sha256
+        obs_changed = EvidenceObservation(
+            evidence_id="cache-001",
+            source_path="evidence/router.jpg",
+            media_kind="image",
+            sha256="sha_bbb",
+            order_index=0,
+        )
+        # Backend still has the fixture so it will re-extract
+        result = extract_with_cache(obs_changed, backend, store)
+
+        assert result.source_sha256 == "sha_aaa"  # from backend, not cache
+
+
+# ---------------------------------------------------------------------------
 # Ollama integration test (issue #11)
 # ---------------------------------------------------------------------------
 
