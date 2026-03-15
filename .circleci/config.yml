@@ -58,7 +58,9 @@ jobs:
                 --git-service=github \
                 --slug=Jurph/fast-foto-forensics \
                 --plugin pycoverage \
-                --coverage-files-search-root-folder .; then
+                --file=coverage.xml \
+                --disable-search \
+                --fail-on-error; then
                 echo "Codecov upload completed successfully."
               else
                 echo "Codecov upload failed."
