@@ -51,13 +51,19 @@ jobs:
               echo "CODECOV_TOKEN not set; skipping Codecov upload."
               echo "CircleCI clicks: Project Settings -> Environment Variables -> Add Variable."
             else
-              codecovcli do-upload \
+              echo "Starting Codecov upload..."
+              if codecovcli do-upload \
                 --token="$CODECOV_TOKEN" \
                 --sha="$CIRCLE_SHA1" \
                 --git-service=github \
                 --slug=Jurph/fast-foto-forensics \
                 --plugin pycoverage \
-                --coverage-files-search-root-folder .
+                --coverage-files-search-root-folder .; then
+                echo "Codecov upload completed successfully."
+              else
+                echo "Codecov upload failed."
+                exit 1
+              fi
             fi
 
       - store_test_results:

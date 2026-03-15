@@ -23,6 +23,9 @@ def test_circleci_config_exists_and_runs_pytest_with_coverage() -> None:
     assert "pytest" in text
     assert "coverage.xml" in text
     assert "codecov" in text.lower()
+    assert "Starting Codecov upload" in text
+    assert "Codecov upload completed successfully" in text
+    assert "Codecov upload failed" in text
 
 
 def test_codecov_config_exists() -> None:
