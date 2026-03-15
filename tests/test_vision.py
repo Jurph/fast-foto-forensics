@@ -1,4 +1,4 @@
-"""Tests for the vision module (issue #4)."""
+"""Tests for the vision module (issues #4, #5)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import pytest
 
 from fast_foto_forensics.models import EvidenceObservation, VisionResult
 from fast_foto_forensics.vision import (
+    FilenameVisionBackend,
     StaticVisionBackend,
     VisionBackend,
     VisionExtractionError,
@@ -60,6 +61,57 @@ class TestStaticVisionBackend:
 
     def test_satisfies_vision_backend_protocol(self) -> None:
         assert isinstance(StaticVisionBackend(fixtures={}), VisionBackend)
+
+
+class TestFilenameVisionBackend:
+    def test_extracts_labels_and_identifiers_from_filename(self) -> None:
+        backend = FilenameVisionBackend()
+        observation = EvidenceObservation(
+            evidence_id="img-002",
+            source_path="evidence/001-WRT54G-router.jpg",
+            media_kind="image",
+            sha256="def456",
+            order_index=0,
+        )
+        result = backend.extract(observation)
+        assert result.evidence_id == "img-002"
+        assert result.backend_name == "filename"
+        assert result.model_name == "filename"
+        assert "WRT54G" in result.candidate_identifiers
+        assert "router" in result.detected_labels
+
+    def test_handles_simple_filename(self) -> None:
+        backend = FilenameVisionBackend()
+        observation = EvidenceObservation(
+            evidence_id="img-003",
+            source_path="photos/gpu-card.jpg",
+            media_kind="image",
+            sha256="aaa",
+            order_index=0,
+        )
+        result = backend.extract(observation)
+        assert "gpu" in result.detected_labels
+        assert "card" in result.detected_labels
+        assert result.candidate_identifiers == []  # no alphanumeric tokens
+        assert result.caption == "gpu card"
+
+    def test_satisfies_vision_backend_protocol(self) -> None:
+        assert isinstance(FilenameVisionBackend(), VisionBackend)
+
+    def test_enrich_compat_method_populates_observation(self) -> None:
+        """The backward-compat enrich() method should work for pipeline.py."""
+        backend = FilenameVisionBackend()
+        observation = EvidenceObservation(
+            evidence_id="img-004",
+            source_path="evidence/001-WRT54G-router.jpg",
+            media_kind="image",
+            sha256="def456",
+            order_index=0,
+        )
+        enriched = backend.enrich(observation)
+        assert enriched is observation  # mutates in place
+        assert "router" in enriched.detected_labels
+        assert "WRT54G" in enriched.candidate_identifiers
 
 
 class TestVisionExtractionError:

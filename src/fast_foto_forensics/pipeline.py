@@ -20,6 +20,7 @@ from fast_foto_forensics.search import SearchProvider
 from fast_foto_forensics.storage import RunStore
 from fast_foto_forensics.synthesis import SynthesisBackend, synthesize_item
 from fast_foto_forensics.tagging import build_tag_set, write_tag_sidecar
+from fast_foto_forensics.vision import FilenameVisionBackend
 
 
 @dataclass(slots=True)
@@ -29,26 +30,6 @@ class RunResult:
     run_dir: Path
     report_path: Path
     sidecar_paths: list[Path]
-
-
-@dataclass(slots=True)
-class FilenameVisionBackend:
-    """Derive lightweight labels and identifiers from filenames."""
-
-    def enrich(self, observation: EvidenceObservation) -> EvidenceObservation:
-        stem_tokens = [
-            token
-            for token in Path(observation.source_path).stem.replace("_", "-").split("-")
-            if token and not token.isdigit()
-        ]
-        identifiers = [
-            token.upper() for token in stem_tokens if any(char.isdigit() for char in token)
-        ]
-        labels = [token.lower() for token in stem_tokens if token.isalpha()]
-        observation.caption = " ".join(labels) if labels else Path(observation.source_path).stem
-        observation.detected_labels = labels
-        observation.candidate_identifiers = identifiers
-        return observation
 
 
 def _load_observations(store: RunStore) -> dict[str, EvidenceObservation]:
