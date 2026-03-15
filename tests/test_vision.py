@@ -276,7 +276,7 @@ class TestOllamaVisionBackend:
 # extract_with_cache tests (issue #7)
 # ---------------------------------------------------------------------------
 
-from fast_foto_forensics.vision import extract_with_cache
+from fast_foto_forensics.vision import enrich_single, enrich_observations, extract_with_cache
 from fast_foto_forensics.storage import RunStore
 
 
@@ -350,6 +350,91 @@ class TestExtractWithCache:
         result = extract_with_cache(obs_changed, backend, store)
 
         assert result.source_sha256 == "sha_aaa"  # from backend, not cache
+
+
+# ---------------------------------------------------------------------------
+# enrich_single and enrich_observations tests (issue #8)
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichSingle:
+    def test_maps_vision_result_onto_observation(self) -> None:
+        obs = EvidenceObservation(
+            evidence_id="enrich-001",
+            source_path="evidence/router.jpg",
+            media_kind="image",
+            sha256="abc",
+            order_index=0,
+        )
+        result = VisionResult(
+            evidence_id="enrich-001",
+            source_path="evidence/router.jpg",
+            source_sha256="abc",
+            backend_name="static",
+            model_name="static",
+            caption="A blue router.",
+            ocr_text="WRT54G LINKSYS",
+            candidate_identifiers=["WRT54G"],
+            vendor="Linksys",
+            object_class="wireless router",
+            detected_labels=["router", "networking"],
+        )
+        enriched = enrich_single(obs, result)
+        assert enriched is obs  # mutates in place
+        assert obs.caption == "A blue router."
+        assert obs.ocr_text == "WRT54G LINKSYS"
+        assert obs.candidate_identifiers == ["WRT54G"]
+        assert obs.detected_labels == ["router", "networking"]
+
+
+class TestEnrichObservations:
+    def test_enriches_batch(self) -> None:
+        fixture = VisionResult(
+            evidence_id="batch-001",
+            source_path="evidence/router.jpg",
+            source_sha256="abc",
+            backend_name="static",
+            model_name="static",
+            caption="Router photo.",
+            ocr_text="WRT54G",
+            candidate_identifiers=["WRT54G"],
+            vendor="Linksys",
+            object_class="wireless router",
+            detected_labels=["router"],
+        )
+        backend = StaticVisionBackend(fixtures={"batch-001": fixture})
+        obs = EvidenceObservation(
+            evidence_id="batch-001",
+            source_path="evidence/router.jpg",
+            media_kind="image",
+            sha256="abc",
+            order_index=0,
+        )
+        results = enrich_observations([obs], backend)
+        assert results[0].caption == "Router photo."
+
+    def test_skips_failures_without_crashing(self) -> None:
+        """One bad observation should not take down the batch."""
+        backend = StaticVisionBackend(fixtures={})  # no fixtures = all fail
+        obs_bad = EvidenceObservation(
+            evidence_id="bad-001",
+            source_path="evidence/missing.jpg",
+            media_kind="image",
+            sha256="xxx",
+            order_index=0,
+        )
+        obs_bad2 = EvidenceObservation(
+            evidence_id="bad-002",
+            source_path="evidence/also-missing.jpg",
+            media_kind="image",
+            sha256="yyy",
+            order_index=1,
+        )
+        results = enrich_observations([obs_bad, obs_bad2], backend)
+        assert len(results) == 2
+        # Observations are returned but unenriched
+        assert results[0].caption == ""
+        assert results[1].caption == ""
 
 
 # ---------------------------------------------------------------------------

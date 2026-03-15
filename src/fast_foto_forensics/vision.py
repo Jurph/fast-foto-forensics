@@ -155,6 +155,44 @@ class OllamaVisionBackend:
         ) from last_error
 
 
+def enrich_single(
+    observation: EvidenceObservation,
+    result: VisionResult,
+) -> EvidenceObservation:
+    """Map VisionResult fields onto an EvidenceObservation in place."""
+    observation.caption = result.caption
+    observation.ocr_text = result.ocr_text
+    observation.detected_labels = list(result.detected_labels)
+    observation.candidate_identifiers = list(result.candidate_identifiers)
+    return observation
+
+
+def enrich_observations(
+    observations: list[EvidenceObservation],
+    backend: VisionBackend,
+    store: Any = None,
+) -> list[EvidenceObservation]:
+    """Run vision extraction on a batch, enriching each observation.
+
+    Failures on individual observations are logged and skipped so one bad
+    image does not take down an entire run.
+    """
+    for obs in observations:
+        try:
+            if store is not None:
+                result = extract_with_cache(obs, backend, store)
+            else:
+                result = backend.extract(obs)
+            enrich_single(obs, result)
+        except (VisionExtractionError, Exception) as exc:
+            logger.warning(
+                "Vision extraction failed for %s, skipping: %s",
+                obs.evidence_id,
+                exc,
+            )
+    return observations
+
+
 def extract_with_cache(
     observation: EvidenceObservation,
     backend: VisionBackend,
