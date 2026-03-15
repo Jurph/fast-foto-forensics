@@ -12,6 +12,17 @@ Add this project-level environment variable in CircleCI:
 
 - `CODECOV_TOKEN`
 
+Easy click path:
+
+1. Open `https://app.circleci.com/`
+2. Open the `fast-foto-forensics` project
+3. Click `Project Settings`
+4. Click `Environment Variables`
+5. Click `Add Variable`
+6. Name: `CODECOV_TOKEN`
+7. Value: the repository token from Codecov
+8. Save, then push one more commit to trigger an upload
+
 Without that token, the CircleCI job will still run tests and generate `coverage.xml`, but it will
 skip the Codecov upload step.
 

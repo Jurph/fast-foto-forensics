@@ -1,5 +1,12 @@
 version: 2.1
 
+# CircleCI setup reminder:
+# 1. Open https://app.circleci.com/ and select the fast-foto-forensics project.
+# 2. Go to Project Settings -> Environment Variables.
+# 3. Add a variable named CODECOV_TOKEN.
+# 4. Paste the repo token from Codecov and save.
+# Until that variable exists, this config will still run tests but will skip the Codecov upload.
+
 jobs:
   test:
     docker:
@@ -42,6 +49,7 @@ jobs:
             source venv/bin/activate
             if [ -z "${CODECOV_TOKEN:-}" ]; then
               echo "CODECOV_TOKEN not set; skipping Codecov upload."
+              echo "CircleCI clicks: Project Settings -> Environment Variables -> Add Variable."
             else
               codecovcli do-upload \
                 --token="$CODECOV_TOKEN" \
