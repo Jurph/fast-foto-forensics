@@ -63,12 +63,14 @@ class DiagnosticResult:
     source_kind: str
     source_name: str
     source_preview_url: str
+    source_image_bytes: bytes = field(repr=False, default=b"")
     log_messages: list[str] = field(default_factory=list)
     vision_json: dict[str, Any] | None = None
     vision_summary: str = ""
     query_plan: QueryPlan | None = None
     search_hits: list[SearchHit] = field(default_factory=list)
     datasheet_json: dict[str, Any] | None = None
+    synthesis_artifact: dict[str, Any] | None = None
     rendered_datasheet: str = ""
     failures: list[DiagnosticFailure] = field(default_factory=list)
 
@@ -84,6 +86,7 @@ class DiagnosticResult:
             "query_plan": asdict(self.query_plan) if self.query_plan is not None else None,
             "search_hits": [asdict(hit) for hit in self.search_hits],
             "datasheet_json": self.datasheet_json,
+            "synthesis_artifact": self.synthesis_artifact,
             "rendered_datasheet": self.rendered_datasheet,
             "failures": [asdict(failure) for failure in self.failures],
         }
@@ -173,17 +176,20 @@ def run_diagnostic_request(
 
     log_messages.append("synthesizing datasheet")
     datasheet_json: dict[str, Any] | None = None
+    synthesis_artifact: dict[str, Any] | None = None
     rendered_datasheet = ""
     try:
-        datasheet, _artifact = synthesize_item_with_artifact(
+        datasheet, artifact = synthesize_item_with_artifact(
             [observation],
             search_hits,
             synthesis_backend,
         )
         datasheet_json = asdict(datasheet)
+        synthesis_artifact = artifact.to_dict()
         log_messages.append("rendering result")
         rendered_datasheet = render_item_dossier(datasheet, search_hits, [observation])
     except SynthesisFailure as exc:
+        synthesis_artifact = exc.artifact.to_dict()
         failures.append(DiagnosticFailure(stage="synthesis", error=str(exc)))
     except Exception as exc:
         failures.append(DiagnosticFailure(stage="synthesis", error=str(exc)))
@@ -192,12 +198,14 @@ def run_diagnostic_request(
         source_kind=request.source_kind,
         source_name=request.source_name,
         source_preview_url=image_path.as_uri(),
+        source_image_bytes=image_bytes,
         log_messages=log_messages,
         vision_json=vision_json,
         vision_summary=summarize_vision_result(vision_result),
         query_plan=query_plan,
         search_hits=search_hits,
         datasheet_json=datasheet_json,
+        synthesis_artifact=synthesis_artifact,
         rendered_datasheet=rendered_datasheet,
         failures=failures,
     )

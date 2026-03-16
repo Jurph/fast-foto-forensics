@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 
 from fast_foto_forensics.models import QueryCandidate, QueryPlan, SearchHit, VisionResult
+from fast_foto_forensics.export_fixture import export_diagnostic_fixture
 from fast_foto_forensics.search import StaticSearchProvider
 from fast_foto_forensics.synthesis import ReplaySynthesisBackend
 from fast_foto_forensics.vision import StaticVisionBackend
@@ -300,3 +302,46 @@ def test_run_diagnostic_request_preserves_search_hits_when_synthesis_fails(tmp_p
     assert result.datasheet_json is None
     assert result.rendered_datasheet == ""
     assert result.failures == [DiagnosticFailure(stage="synthesis", error="model crashed")]
+
+
+def test_export_diagnostic_fixture_writes_image_and_metadata(tmp_path) -> None:
+    """Export should create a retryable image fixture plus a metadata sidecar."""
+    request = DiagnosticRequest.from_image_url("https://example.com/evidence/router.jpg")
+    result = DiagnosticResult(
+        source_kind="url",
+        source_name="router.jpg",
+        source_preview_url="file:///tmp/router.jpg",
+        log_messages=["running vision", "running search"],
+        vision_json={
+            "backend_name": "ollama",
+            "model_name": "qwen2.5vl:7b",
+            "caption": "A blue wireless router.",
+        },
+        vision_summary="Linksys | wireless router | WRT54G",
+        datasheet_json={"probable_identity": "Linksys WRT54G"},
+        rendered_datasheet="Linksys WRT54G",
+        failures=[DiagnosticFailure(stage="synthesis", error="model crashed")],
+        synthesis_artifact={"backend_name": "ollama", "model_name": "qwen3:8b"},
+        source_image_bytes=b"fake-router-image",
+    )
+
+    exported = export_diagnostic_fixture(
+        request,
+        result,
+        export_root=tmp_path / "exports",
+        analyst_note="bad synthesis on router sample",
+    )
+
+    assert exported.image_path.exists()
+    assert exported.image_path.read_bytes() == b"fake-router-image"
+    assert exported.metadata_path.exists()
+
+    metadata = json.loads(exported.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["source_kind"] == "url"
+    assert metadata["source_url"] == "https://example.com/evidence/router.jpg"
+    assert metadata["analyst_note"] == "bad synthesis on router sample"
+    assert metadata["vision_backend_name"] == "ollama"
+    assert metadata["vision_model_name"] == "qwen2.5vl:7b"
+    assert metadata["synthesis_backend_name"] == "ollama"
+    assert metadata["synthesis_model_name"] == "qwen3:8b"
+    assert metadata["failures"][0]["stage"] == "synthesis"
