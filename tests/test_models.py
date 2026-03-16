@@ -11,6 +11,7 @@ from fast_foto_forensics.models import (
     ImageTagSet,
     ItemDatasheet,
     SearchHit,
+    SynthesisArtifact,
     VisionResult,
 )
 from fast_foto_forensics.tagging import build_tag_set
@@ -163,3 +164,52 @@ def test_vision_result_confidence_round_trips() -> None:
     del payload["confidence"]
     restored_default = VisionResult.from_dict(payload)
     assert restored_default.confidence == 0.0
+
+
+def test_synthesis_artifact_round_trips_through_dict() -> None:
+    """Synthesis artifacts should preserve provenance through artifact storage."""
+    artifact = SynthesisArtifact(
+        backend_name="ollama",
+        model_name="qwen3:8b",
+        schema_name="ItemDatasheet",
+        raw_payload='{"probable_identity":"WRT54G"}',
+        accepted=True,
+        attempt_count=1,
+        last_error=None,
+    )
+
+    restored = SynthesisArtifact.from_dict(artifact.to_dict())
+
+    assert restored == artifact
+
+
+def test_synthesis_artifact_requires_core_metadata() -> None:
+    """Persisted synthesis artifacts should fail fast when identity fields are missing."""
+    payload = {
+        "backend_name": "ollama",
+        "model_name": "qwen3:8b",
+        "raw_payload": "{}",
+        "accepted": False,
+        "attempt_count": 2,
+    }
+
+    with pytest.raises(ValueError, match="schema_name"):
+        SynthesisArtifact.from_dict(payload)
+
+
+def test_synthesis_artifact_defaults_last_error_to_none() -> None:
+    """Synthesis artifacts should tolerate a missing last_error field."""
+    payload = {
+        "backend_name": "ollama",
+        "model_name": "qwen3:8b",
+        "schema_name": "ItemDatasheet",
+        "raw_payload": "{}",
+        "accepted": False,
+        "attempt_count": 2,
+    }
+
+    restored = SynthesisArtifact.from_dict(payload)
+
+    assert restored.last_error is None
+    assert restored.accepted is False
+    assert restored.attempt_count == 2

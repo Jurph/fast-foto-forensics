@@ -303,3 +303,44 @@ class ItemDatasheet:
         except json.JSONDecodeError as exc:
             raise ValueError("invalid JSON payload") from exc
         return cls.from_dict(data)
+
+
+@dataclass(slots=True)
+class SynthesisArtifact:
+    """Persisted provenance for one synthesis attempt."""
+
+    backend_name: str
+    model_name: str
+    schema_name: str
+    raw_payload: str
+    accepted: bool
+    attempt_count: int
+    last_error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the artifact into a JSON-friendly dictionary."""
+        return {
+            "backend_name": self.backend_name,
+            "model_name": self.model_name,
+            "schema_name": self.schema_name,
+            "raw_payload": self.raw_payload,
+            "accepted": self.accepted,
+            "attempt_count": self.attempt_count,
+            "last_error": self.last_error,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SynthesisArtifact:
+        """Rebuild a synthesis artifact from persisted JSON-friendly data."""
+        accepted = data.get("accepted")
+        if not isinstance(accepted, bool):
+            raise ValueError("accepted must be a boolean")
+        return cls(
+            backend_name=_require_str(data, "backend_name"),
+            model_name=_require_str(data, "model_name"),
+            schema_name=_require_str(data, "schema_name"),
+            raw_payload=_require_str(data, "raw_payload"),
+            accepted=accepted,
+            attempt_count=int(data.get("attempt_count", 0)),
+            last_error=_optional_str(data, "last_error"),
+        )
