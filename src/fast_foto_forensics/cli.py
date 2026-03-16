@@ -13,6 +13,7 @@ from fast_foto_forensics.pipeline import (
     run_pipeline,
 )
 from fast_foto_forensics.search import (
+    DDGSSearchProvider,
     DuckDuckGoSearchProvider,
     SearchProvider,
     SearXNGSearchProvider,
@@ -41,8 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--vision-model", default="qwen2.5vl:7b", help="Ollama model name")
     run_parser.add_argument(
         "--search-provider",
-        choices=("static", "duckduckgo", "searxng"),
-        default="static",
+        choices=("static", "duckduckgo", "ddgs", "searxng"),
+        default="ddgs",
     )
     run_parser.add_argument("--searxng-url", default="http://localhost:8888", help="SearXNG instance URL")
     run_parser.add_argument("--proxy")
@@ -87,6 +88,8 @@ def run_cli(argv: list[str] | None = None) -> int:
             search_provider = SearXNGSearchProvider(
                 instance_url=args.searxng_url, proxy_url=args.proxy
             )
+        elif args.search_provider == "ddgs":
+            search_provider = DDGSSearchProvider(proxy=args.proxy)
         else:
             search_provider = DuckDuckGoSearchProvider(proxy_url=args.proxy)
         result = run_pipeline(

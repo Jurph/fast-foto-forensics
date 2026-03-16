@@ -1,13 +1,39 @@
-"""Normalized search providers for evidence enrichment."""
+"""Normalized search providers for evidence enrichment.
+
+Architecture
+------------
+Every provider implements the ``SearchProvider`` protocol: a single
+``.search(query) -> list[SearchHit]`` method.  The pipeline hands each
+provider the same query string and merges the returned hits.
+
+Adding a new provider
+~~~~~~~~~~~~~~~~~~~~~
+1. Create a ``@dataclass(slots=True)`` class with a ``search`` method.
+2. Normalize every result into a ``SearchHit`` (see ``models.py``).
+3. Assign a unique ``provider`` tag (e.g. ``"ddgs"``, ``"searxng"``).
+4. Register the choice in ``cli.py`` ``--search-provider``.
+
+Parallel / multi-provider queries (future)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The protocol is deliberately stateless so that providers can be fanned out
+concurrently.  A future ``CompositeSearchProvider`` could accept a list of
+providers and dispatch queries via ``concurrent.futures`` or ``asyncio``,
+deduplicating hits by URL before returning a merged list.  Each provider
+already tags its hits with a ``provider`` field, so downstream code can
+weight or filter by source.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import httpx
 
 from fast_foto_forensics.models import SearchHit
+
+logger = logging.getLogger(__name__)
 
 
 class SearchProviderError(RuntimeError):
@@ -15,15 +41,29 @@ class SearchProviderError(RuntimeError):
 
 
 class SearchProvider(Protocol):
-    """Protocol for pluggable search providers."""
+    """Protocol for pluggable search providers.
+
+    Every concrete provider must expose a synchronous ``.search()`` method.
+    For parallel fan-out, wrap multiple providers in a dispatcher that calls
+    each one in its own thread/task and merges the ``SearchHit`` lists.
+    """
 
     def search(self, query: str) -> list[SearchHit]:
         """Return normalized hits for the given query."""
 
 
+# ---------------------------------------------------------------------------
+# Static / fixture provider — useful for tests and offline demos
+# ---------------------------------------------------------------------------
+
+
 @dataclass(slots=True)
 class StaticSearchProvider:
-    """Fixture-backed search provider for tests and demos."""
+    """Fixture-backed search provider for tests and demos.
+
+    Keyed by exact query string.  In a parallel pipeline this could serve
+    as a fast "cache tier" that short-circuits before hitting live providers.
+    """
 
     fixtures: dict[str, list[dict[str, str]]]
 
@@ -42,9 +82,23 @@ class StaticSearchProvider:
         ]
 
 
+# ---------------------------------------------------------------------------
+# DuckDuckGo Instant Answer API — knowledge-graph only, no web results
+# ---------------------------------------------------------------------------
+
+
 @dataclass(slots=True)
 class DuckDuckGoSearchProvider:
-    """DuckDuckGo Instant Answer adapter."""
+    """DuckDuckGo Instant Answer adapter.
+
+    Hits the ``api.duckduckgo.com`` JSON endpoint.  Good for well-known
+    entities (Wikipedia summaries, etc.) but returns *zero* results for
+    niche hardware queries.  Kept for completeness; prefer ``DDGSSearchProvider``
+    for real web search.
+
+    In a parallel pipeline, this provider is fast (~200ms) and could run
+    alongside slower web-scraping providers to provide instant partial results.
+    """
 
     client: httpx.Client | None = None
     proxy_url: str | None = None
@@ -145,13 +199,23 @@ class DuckDuckGoSearchProvider:
         return hits
 
 
+# ---------------------------------------------------------------------------
+# SearXNG — self-hosted metasearch engine with a JSON API
+# ---------------------------------------------------------------------------
+
+
 @dataclass(slots=True)
 class SearXNGSearchProvider:
     """Search via a SearXNG instance (local or remote).
 
-    SearXNG is a self-hosted metasearch engine with a JSON API.
-    Run locally: docker run -p 8888:8888 searxng/searxng
-    No API key required.
+    SearXNG is a self-hosted metasearch engine that aggregates results from
+    dozens of upstream engines (Google, Bing, Brave, etc.) and exposes them
+    through a clean JSON API.  No API key required, but you need a running
+    instance.
+
+    In a parallel pipeline this is the heaviest provider (~2-5s) but returns
+    the richest results.  A ``CompositeSearchProvider`` should fire this off
+    early and let faster providers return partial results while it completes.
     """
 
     instance_url: str = "http://localhost:8888"
@@ -196,3 +260,68 @@ class SearXNGSearchProvider:
         return hits
 
 
+# ---------------------------------------------------------------------------
+# DDGS — real DuckDuckGo web search via HTML scraping (default provider)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class DDGSSearchProvider:
+    """Web search via the ``ddgs`` package (DuckDuckGo HTML scraping).
+
+    Unlike ``DuckDuckGoSearchProvider`` (which hits the Instant Answer API and
+    returns only knowledge-graph results), this provider scrapes actual web
+    search results.  No API key, no Docker, no browser required.
+
+    The ``ddgs`` package handles anti-bot countermeasures internally and is
+    actively maintained.  It's the best default for "just give me web results."
+
+    Install: ``pip install ddgs``  (or ``pip install fast-foto-forensics[search_ddgs]``)
+
+    Parallel pipeline notes
+    ~~~~~~~~~~~~~~~~~~~~~~~
+    - Typical latency: 500ms-2s per query.
+    - Stateless and thread-safe — safe to call from multiple threads.
+    - Rate limits are per-session; for high-throughput fan-out, consider
+      adding a short delay between concurrent queries or rotating proxies.
+    - The ``proxy`` field accepts SOCKS5 URLs (e.g. ``socks5://...``) which
+      can help distribute load across exit nodes.
+    """
+
+    max_results: int = 5
+    proxy: str | None = None
+
+    def search(self, query: str) -> list[SearchHit]:
+        try:
+            from ddgs import DDGS  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise SearchProviderError(
+                "ddgs package not installed. Install with: pip install ddgs"
+            ) from exc
+
+        try:
+            with DDGS(proxy=self.proxy) as ddgs:
+                raw = list(ddgs.text(query, max_results=self.max_results))
+        except Exception as exc:
+            raise SearchProviderError(
+                f"DDGS web search failed for query {query!r}: {exc}"
+            ) from exc
+
+        hits: list[SearchHit] = []
+        for index, row in enumerate(raw):
+            title = (row.get("title") or "").strip()
+            snippet = (row.get("body") or "").strip()
+            url = (row.get("href") or "").strip()
+            if not url:
+                continue
+            hits.append(
+                SearchHit(
+                    hit_id=f"ddgs-{index:03d}",
+                    provider="ddgs",
+                    query=query,
+                    title=title or query,
+                    snippet=snippet,
+                    url=url,
+                )
+            )
+        return hits

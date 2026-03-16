@@ -29,6 +29,9 @@ ci = [
 vision_ollama = [
     "ollama>=0.4.0",
 ]
+search_ddgs = [
+    "ddgs>=7.0.0",
+]
 
 [tool.setuptools.package-dir]
 "" = "src"

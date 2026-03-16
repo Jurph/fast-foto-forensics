@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from fast_foto_forensics.search import (
+    DDGSSearchProvider,
     DuckDuckGoSearchProvider,
     SearXNGSearchProvider,
     SearchProviderError,
@@ -154,6 +155,59 @@ def test_searxng_provider_normalizes_json_results() -> None:
     assert hits[0].title == "TP-Link OC200 Datasheet"
     assert hits[0].url == "https://example.com/oc200"
     assert hits[1].snippet == "A compact hardware controller."
+
+
+def test_ddgs_provider_normalizes_results() -> None:
+    """DDGS web search results should normalize into SearchHit objects."""
+    import unittest.mock as mock
+
+    fake_results = [
+        {
+            "title": "OC200 | Omada Hardware Controller | TP-Link",
+            "body": "Industry-leading hardware design with a powerful chipset.",
+            "href": "https://www.tp-link.com/us/business-networking/oc200/",
+        },
+        {
+            "title": "TP-Link OC200 Review",
+            "body": "A compact hardware controller for Omada access points.",
+            "href": "https://example.com/oc200-review",
+        },
+    ]
+
+    mock_ddgs_instance = mock.MagicMock()
+    mock_ddgs_instance.__enter__ = mock.Mock(return_value=mock_ddgs_instance)
+    mock_ddgs_instance.__exit__ = mock.Mock(return_value=False)
+    mock_ddgs_instance.text.return_value = fake_results
+
+    with mock.patch("fast_foto_forensics.search.DDGSSearchProvider.search") as mock_search:
+        # Test the real normalization logic by calling through
+        pass
+
+    # Test directly by mocking the ddgs import
+    provider = DDGSSearchProvider(max_results=5)
+    with mock.patch.dict("sys.modules", {"ddgs": mock.MagicMock()}):
+        import sys
+
+        mock_ddgs_module = sys.modules["ddgs"]
+        mock_ddgs_module.DDGS.return_value = mock_ddgs_instance
+
+        hits = provider.search("TP-Link OC200 datasheet")
+
+    assert len(hits) == 2
+    assert hits[0].provider == "ddgs"
+    assert hits[0].title == "OC200 | Omada Hardware Controller | TP-Link"
+    assert hits[0].url == "https://www.tp-link.com/us/business-networking/oc200/"
+    assert hits[1].snippet == "A compact hardware controller for Omada access points."
+
+
+def test_ddgs_provider_raises_on_missing_package() -> None:
+    """DDGS should raise SearchProviderError when ddgs is not installed."""
+    import unittest.mock as mock
+
+    provider = DDGSSearchProvider()
+    with mock.patch.dict("sys.modules", {"ddgs": None}):
+        with pytest.raises(SearchProviderError, match="ddgs"):
+            provider.search("test query")
 
 
 def test_searxng_provider_raises_on_connection_error() -> None:
