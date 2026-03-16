@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from fast_foto_forensics.models import (
@@ -42,6 +42,14 @@ _ITEM_DATASHEET_SCHEMA: dict[str, Any] = {
 
 class SynthesisError(RuntimeError):
     """Raised when a synthesis backend cannot produce a usable payload."""
+
+
+class SynthesisFailure(ValueError):
+    """Raised when synthesis could not produce a valid datasheet payload."""
+
+    def __init__(self, artifact: SynthesisArtifact):
+        super().__init__(artifact.last_error or "failed to synthesize datasheet")
+        self.artifact = artifact
 
 
 class SynthesisBackend(Protocol):
@@ -119,6 +127,25 @@ def _coerce_artifact(
         accepted=False,
         attempt_count=1,
         last_error=None,
+    )
+
+
+def _artifact_from_backend_error(
+    backend: SynthesisBackend,
+    attempt_count: int,
+    error: Exception,
+) -> SynthesisArtifact:
+    """Build a provenance record for a backend-level failure."""
+    backend_name = getattr(backend, "__class__", type(backend)).__name__
+    model_name = getattr(backend, "model", backend_name)
+    return SynthesisArtifact(
+        backend_name=str(backend_name),
+        model_name=str(model_name),
+        schema_name="ItemDatasheet",
+        raw_payload="",
+        accepted=False,
+        attempt_count=attempt_count,
+        last_error=str(error),
     )
 
 
@@ -267,24 +294,60 @@ class RemoteDatasheetSynthesisBackend:
         )
 
 
+def synthesize_item_with_artifact(
+    observations: list[EvidenceObservation],
+    hits: list[SearchHit],
+    backend: SynthesisBackend,
+) -> tuple[ItemDatasheet, SynthesisArtifact]:
+    """Generate and validate a structured datasheet plus provenance."""
+    last_artifact: SynthesisArtifact | None = None
+
+    for attempt in range(1, 3):
+        try:
+            artifact = _coerce_artifact(
+                backend.generate(
+                    observations=observations,
+                    hits=hits,
+                ),
+                backend,
+            )
+        except Exception as exc:
+            last_artifact = _artifact_from_backend_error(backend, attempt, exc)
+            raise SynthesisFailure(last_artifact) from exc
+
+        artifact = replace(artifact, attempt_count=attempt)
+        try:
+            datasheet = ItemDatasheet.from_json(artifact.raw_payload)
+        except ValueError as exc:
+            last_artifact = replace(
+                artifact,
+                accepted=False,
+                last_error=str(exc),
+                attempt_count=attempt,
+            )
+            continue
+
+        return datasheet, replace(
+            artifact,
+            accepted=True,
+            last_error=None,
+            attempt_count=attempt,
+        )
+
+    if last_artifact is None:
+        last_artifact = _artifact_from_backend_error(
+            backend,
+            1,
+            SynthesisError("failed to synthesize datasheet"),
+        )
+    raise SynthesisFailure(last_artifact)
+
+
 def synthesize_item(
     observations: list[EvidenceObservation],
     hits: list[SearchHit],
     backend: SynthesisBackend,
 ) -> ItemDatasheet:
     """Generate and validate a structured datasheet."""
-    last_error: str | None = None
-    for _ in range(2):
-        artifact = _coerce_artifact(
-            backend.generate(
-                observations=observations,
-                hits=hits,
-            ),
-            backend,
-        )
-        raw_payload = artifact.raw_payload
-        try:
-            return ItemDatasheet.from_json(raw_payload)
-        except ValueError as exc:
-            last_error = str(exc)
-    raise ValueError(last_error or "failed to synthesize datasheet")
+    datasheet, _artifact = synthesize_item_with_artifact(observations, hits, backend)
+    return datasheet

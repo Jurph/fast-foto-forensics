@@ -26,7 +26,7 @@ weight or filter by source.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
@@ -236,9 +236,7 @@ class SearXNGSearchProvider:
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise SearchProviderError(
-                f"SearXNG search failed for query {query!r}: {exc}"
-            ) from exc
+            raise SearchProviderError(f"SearXNG search failed for query {query!r}: {exc}") from exc
 
         hits: list[SearchHit] = []
         for index, result in enumerate(payload.get("results", [])[: self.max_results]):
@@ -293,7 +291,7 @@ class DDGSSearchProvider:
 
     def search(self, query: str) -> list[SearchHit]:
         try:
-            from ddgs import DDGS  # type: ignore[import-untyped]
+            from ddgs import DDGS
         except ImportError as exc:
             raise SearchProviderError(
                 "ddgs package not installed. Install with: pip install ddgs"
@@ -303,9 +301,7 @@ class DDGSSearchProvider:
             with DDGS(proxy=self.proxy) as ddgs:
                 raw = list(ddgs.text(query, max_results=self.max_results))
         except Exception as exc:
-            raise SearchProviderError(
-                f"DDGS web search failed for query {query!r}: {exc}"
-            ) from exc
+            raise SearchProviderError(f"DDGS web search failed for query {query!r}: {exc}") from exc
 
         hits: list[SearchHit] = []
         for index, row in enumerate(raw):

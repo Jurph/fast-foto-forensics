@@ -6,7 +6,32 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fast_foto_forensics.main import main
+from fast_foto_forensics.synthesis import ReplaySynthesisBackend
 from fast_foto_forensics.vision import OllamaVisionBackend
+
+
+def _make_replay_synthesis_backend() -> ReplaySynthesisBackend:
+    """Return a canned datasheet backend for CLI tests."""
+    return ReplaySynthesisBackend(
+        responses=[
+            """
+            {
+              "probable_identity": "Linksys WRT54G",
+              "object_class": "router",
+              "likely_function": "Wireless router",
+              "manufacturer": "Linksys",
+              "model_identifiers": ["WRT54G"],
+              "year_range": "2002-2005",
+              "country_or_region": "United States",
+              "security_findings": [],
+              "confidence": 0.88,
+              "evidence_refs": ["obs-0000"],
+              "search_hit_refs": [],
+              "open_questions": []
+            }
+            """
+        ]
+    )
 
 
 def test_cli_run_command_creates_run_directory(capsys) -> None:
@@ -17,9 +42,21 @@ def test_cli_run_command_creates_run_directory(capsys) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (input_dir / "001-wrt54g-router.jpg").write_bytes(b"router")
 
-    exit_code = main(
-        ["run", str(input_dir), "--output", str(output_dir), "--run-label", "cli-demo"]
-    )
+    with patch(
+        "fast_foto_forensics.cli.OllamaDatasheetSynthesisBackend",
+        return_value=_make_replay_synthesis_backend(),
+    ):
+        exit_code = main(
+            [
+                "run",
+                str(input_dir),
+                "--output",
+                str(output_dir),
+                "--run-label",
+                "cli-demo",
+                "--offline",
+            ]
+        )
 
     assert exit_code == 0
     assert (output_dir / "cli-demo" / "reports" / "report.md").exists()
@@ -40,10 +77,24 @@ def test_cli_render_and_tag_commands_rebuild_artifacts() -> None:
     image_path = input_dir / "001-wrt54g-router.jpg"
     image_path.write_bytes(b"router")
 
-    assert (
-        main(["run", str(input_dir), "--output", str(output_dir), "--run-label", "render-demo"])
-        == 0
-    )
+    with patch(
+        "fast_foto_forensics.cli.OllamaDatasheetSynthesisBackend",
+        return_value=_make_replay_synthesis_backend(),
+    ):
+        assert (
+            main(
+                [
+                    "run",
+                    str(input_dir),
+                    "--output",
+                    str(output_dir),
+                    "--run-label",
+                    "render-demo",
+                    "--offline",
+                ]
+            )
+            == 0
+        )
 
     run_dir = output_dir / "render-demo"
     report_path = run_dir / "reports" / "report.md"
@@ -66,12 +117,38 @@ def test_cli_compose_command_writes_summary() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (input_dir / "001-wrt54g-router.jpg").write_bytes(b"router")
 
-    assert (
-        main(["run", str(input_dir), "--output", str(output_dir), "--run-label", "compose-a"]) == 0
-    )
-    assert (
-        main(["run", str(input_dir), "--output", str(output_dir), "--run-label", "compose-b"]) == 0
-    )
+    with patch(
+        "fast_foto_forensics.cli.OllamaDatasheetSynthesisBackend",
+        side_effect=[_make_replay_synthesis_backend(), _make_replay_synthesis_backend()],
+    ):
+        assert (
+            main(
+                [
+                    "run",
+                    str(input_dir),
+                    "--output",
+                    str(output_dir),
+                    "--run-label",
+                    "compose-a",
+                    "--offline",
+                ]
+            )
+            == 0
+        )
+        assert (
+            main(
+                [
+                    "run",
+                    str(input_dir),
+                    "--output",
+                    str(output_dir),
+                    "--run-label",
+                    "compose-b",
+                    "--offline",
+                ]
+            )
+            == 0
+        )
 
     composed_path = output_dir / "combined.md"
 
@@ -105,7 +182,13 @@ def test_cli_run_with_ollama_backend_flag() -> None:
     from fast_foto_forensics.vision import FilenameVisionBackend
 
     filename_backend = FilenameVisionBackend()
-    with patch.object(OllamaVisionBackend, "extract", side_effect=filename_backend.extract):
+    with (
+        patch.object(OllamaVisionBackend, "extract", side_effect=filename_backend.extract),
+        patch(
+            "fast_foto_forensics.cli.OllamaDatasheetSynthesisBackend",
+            return_value=_make_replay_synthesis_backend(),
+        ),
+    ):
         exit_code = main(
             [
                 "run",
@@ -116,6 +199,7 @@ def test_cli_run_with_ollama_backend_flag() -> None:
                 "ollama-demo",
                 "--vision-backend",
                 "ollama",
+                "--offline",
             ]
         )
 
@@ -123,12 +207,39 @@ def test_cli_run_with_ollama_backend_flag() -> None:
     assert (output_dir / "ollama-demo" / "reports" / "report.md").exists()
 
 
+def test_cli_run_uses_ollama_synthesis_backend_by_default() -> None:
+    """The default run path should select the local Ollama synthesis backend."""
+    input_dir = Path(".tmp") / "cli-synth-case"
+    output_dir = Path(".tmp") / "cli-synth-output"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "001-wrt54g-router.jpg").write_bytes(b"router")
+
+    with patch(
+        "fast_foto_forensics.cli.OllamaDatasheetSynthesisBackend",
+        return_value=_make_replay_synthesis_backend(),
+    ) as synthesis_cls:
+        exit_code = main(
+            [
+                "run",
+                str(input_dir),
+                "--output",
+                str(output_dir),
+                "--run-label",
+                "synth-demo",
+                "--offline",
+            ]
+        )
+
+    assert exit_code == 0
+    synthesis_cls.assert_called_once_with()
+
+
 def test_cli_run_partial_failure_shows_warning(capsys) -> None:
     """When synthesis fails, the summary should show PARTIAL and list the failure."""
     from dataclasses import dataclass
 
     from fast_foto_forensics.models import EvidenceObservation, SearchHit
-    from fast_foto_forensics.synthesis import SynthesisBackend
 
     @dataclass(slots=True)
     class FailingSynthesisBackend:
@@ -146,13 +257,21 @@ def test_cli_run_partial_failure_shows_warning(capsys) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (input_dir / "001-wrt54g-router.jpg").write_bytes(b"router")
 
-    # Patch HeuristicSynthesisBackend to use our failing one
+    # Patch the default synthesis backend to use our failing one
     with patch(
-        "fast_foto_forensics.cli.HeuristicSynthesisBackend",
+        "fast_foto_forensics.cli.OllamaDatasheetSynthesisBackend",
         return_value=FailingSynthesisBackend(),
     ):
         exit_code = main(
-            ["run", str(input_dir), "--output", str(output_dir), "--run-label", "partial-demo"]
+            [
+                "run",
+                str(input_dir),
+                "--output",
+                str(output_dir),
+                "--run-label",
+                "partial-demo",
+                "--offline",
+            ]
         )
 
     assert exit_code == 0

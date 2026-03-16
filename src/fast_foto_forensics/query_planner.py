@@ -178,7 +178,8 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                 # Queries anchored by vendor are more valuable
                 score = 5.0 if word.casefold() == vendor_lower else 2.0
                 _record_candidate(
-                    candidates, score_buckets,
+                    candidates,
+                    score_buckets,
                     query_text,
                     ["word_x_alphanum", obs.evidence_id],
                     score,
@@ -188,7 +189,8 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
         if obs.ocr_text.strip():
             truncated = obs.ocr_text.strip().replace("\n", " ")[:120].strip()
             _record_candidate(
-                candidates, score_buckets,
+                candidates,
+                score_buckets,
                 truncated,
                 ["ocr_blob", obs.evidence_id],
                 1.0,
@@ -197,7 +199,8 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
         # --- Analyst hints (always included if present) ---
         if obs.analyst_hints:
             _record_candidate(
-                candidates, score_buckets,
+                candidates,
+                score_buckets,
                 " ".join(obs.analyst_hints[:3]),
                 ["analyst_hint", obs.evidence_id],
                 1.0,

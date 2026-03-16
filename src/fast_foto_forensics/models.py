@@ -84,9 +84,7 @@ class EvidenceObservation:
                 else []
             ),
             serial_numbers=(
-                _require_list(data, "serial_numbers")
-                if "serial_numbers" in data
-                else []
+                _require_list(data, "serial_numbers") if "serial_numbers" in data else []
             ),
             vendor=_optional_str(data, "vendor") or "",
             object_class=_optional_str(data, "object_class") or "",
@@ -147,9 +145,7 @@ class VisionResult:
                 else []
             ),
             serial_numbers=(
-                _require_list(data, "serial_numbers")
-                if "serial_numbers" in data
-                else []
+                _require_list(data, "serial_numbers") if "serial_numbers" in data else []
             ),
             vendor=_optional_str(data, "vendor"),
             object_class=_optional_str(data, "object_class"),

@@ -9,8 +9,8 @@ import pytest
 from fast_foto_forensics.models import EvidenceObservation, SearchHit, SynthesisArtifact
 from fast_foto_forensics.synthesis import (
     OllamaDatasheetSynthesisBackend,
-    ReplaySynthesisBackend,
     RemoteDatasheetSynthesisBackend,
+    ReplaySynthesisBackend,
     synthesize_item,
 )
 
