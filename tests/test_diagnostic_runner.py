@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fast_foto_forensics.models import QueryCandidate, QueryPlan, SearchHit, VisionResult
+from fast_foto_forensics.search import StaticSearchProvider
+from fast_foto_forensics.synthesis import ReplaySynthesisBackend
+from fast_foto_forensics.vision import StaticVisionBackend
 from fast_foto_forensics.diagnostic_runner import (
     DiagnosticFailure,
     DiagnosticRequest,
     DiagnosticResult,
+    run_diagnostic_request,
     summarize_vision_result,
 )
 
@@ -96,3 +102,201 @@ def test_diagnostic_result_to_dict_is_json_friendly() -> None:
     assert payload["query_plan"]["selected_queries"][0]["text"] == "Linksys WRT54G"
     assert payload["search_hits"][0]["provider"] == "ddgs"
     assert payload["failures"][0]["stage"] == "search"
+
+
+def test_run_diagnostic_request_executes_real_stage_order(tmp_path) -> None:
+    """A successful diagnostic run should expose stage artifacts in order."""
+    request = DiagnosticRequest.from_upload_bytes("router.jpg", b"fake-image-bytes")
+    vision_backend = StaticVisionBackend(
+        fixtures={
+            "diagnostic-000": VisionResult(
+                evidence_id="diagnostic-000",
+                source_path=str(tmp_path / "router.jpg"),
+                source_sha256="deadbeef",
+                backend_name="static",
+                model_name="fixture",
+                caption="A blue wireless router.",
+                ocr_text="WRT54G LINKSYS",
+                candidate_identifiers=["WRT54G"],
+                vendor="Linksys",
+                object_class="wireless router",
+                detected_labels=["router", "wireless"],
+            )
+        }
+    )
+    search_provider = StaticSearchProvider(
+        fixtures={
+            "LINKSYS WRT54G": [
+                {
+                    "title": "Linksys WRT54G overview",
+                    "snippet": "A wireless router series.",
+                    "url": "https://example.com/wrt54g",
+                }
+            ]
+        }
+    )
+    synthesis_backend = ReplaySynthesisBackend(
+        responses=[
+            """
+            {
+              "probable_identity": "Linksys WRT54G",
+              "object_class": "wireless router",
+              "likely_function": "Wireless router",
+              "manufacturer": "Linksys",
+              "model_identifiers": ["WRT54G"],
+              "year_range": "2002-2005",
+              "country_or_region": "United States",
+              "security_findings": [],
+              "confidence": 0.88,
+              "evidence_refs": ["diagnostic-000"],
+              "search_hit_refs": ["static-000"],
+              "open_questions": []
+            }
+            """
+        ]
+    )
+
+    result = run_diagnostic_request(
+        request,
+        work_root=tmp_path,
+        vision_backend=vision_backend,
+        search_provider=search_provider,
+        synthesis_backend=synthesis_backend,
+    )
+
+    assert result.source_name == "router.jpg"
+    assert result.vision_json is not None
+    assert result.vision_json["vendor"] == "Linksys"
+    assert result.query_plan is not None
+    assert result.query_plan.selected_queries[0].text == "LINKSYS WRT54G"
+    assert result.search_hits[0].provider == "static"
+    assert result.datasheet_json is not None
+    assert result.datasheet_json["probable_identity"] == "Linksys WRT54G"
+    assert result.failures == []
+    assert result.log_messages == [
+        "materializing image",
+        "running vision",
+        "building query plan",
+        "running search",
+        "synthesizing datasheet",
+        "rendering result",
+    ]
+
+
+def test_run_diagnostic_request_preserves_earlier_artifacts_when_search_fails(tmp_path) -> None:
+    """Search failures should still leave the earlier stages inspectable."""
+
+    @dataclass(slots=True)
+    class FailingSearchProvider:
+        def search(self, query: str) -> list[SearchHit]:
+            raise RuntimeError("search timeout")
+
+    request = DiagnosticRequest.from_upload_bytes("router.jpg", b"fake-image-bytes")
+    vision_backend = StaticVisionBackend(
+        fixtures={
+            "diagnostic-000": VisionResult(
+                evidence_id="diagnostic-000",
+                source_path=str(tmp_path / "router.jpg"),
+                source_sha256="deadbeef",
+                backend_name="static",
+                model_name="fixture",
+                caption="A blue wireless router.",
+                ocr_text="WRT54G LINKSYS",
+                candidate_identifiers=["WRT54G"],
+                vendor="Linksys",
+                object_class="wireless router",
+                detected_labels=["router", "wireless"],
+            )
+        }
+    )
+    synthesis_backend = ReplaySynthesisBackend(
+        responses=[
+            """
+            {
+              "probable_identity": "Linksys WRT54G",
+              "object_class": "wireless router",
+              "likely_function": "Wireless router",
+              "manufacturer": "Linksys",
+              "model_identifiers": ["WRT54G"],
+              "year_range": "2002-2005",
+              "country_or_region": "United States",
+              "security_findings": [],
+              "confidence": 0.88,
+              "evidence_refs": ["diagnostic-000"],
+              "search_hit_refs": [],
+              "open_questions": []
+            }
+            """
+        ]
+    )
+
+    result = run_diagnostic_request(
+        request,
+        work_root=tmp_path,
+        vision_backend=vision_backend,
+        search_provider=FailingSearchProvider(),
+        synthesis_backend=synthesis_backend,
+    )
+
+    assert result.vision_json is not None
+    assert result.query_plan is not None
+    assert result.search_hits == []
+    assert result.datasheet_json is not None
+    assert result.failures == [DiagnosticFailure(stage="search", error="search timeout")]
+
+
+def test_run_diagnostic_request_preserves_search_hits_when_synthesis_fails(tmp_path) -> None:
+    """Synthesis failures should still show search evidence and failure details."""
+
+    @dataclass(slots=True)
+    class FailingSynthesisBackend:
+        def generate(
+            self,
+            observations,
+            hits,
+            previous_error: str | None = None,
+        ) -> str:
+            raise RuntimeError("model crashed")
+
+    request = DiagnosticRequest.from_upload_bytes("router.jpg", b"fake-image-bytes")
+    vision_backend = StaticVisionBackend(
+        fixtures={
+            "diagnostic-000": VisionResult(
+                evidence_id="diagnostic-000",
+                source_path=str(tmp_path / "router.jpg"),
+                source_sha256="deadbeef",
+                backend_name="static",
+                model_name="fixture",
+                caption="A blue wireless router.",
+                ocr_text="WRT54G LINKSYS",
+                candidate_identifiers=["WRT54G"],
+                vendor="Linksys",
+                object_class="wireless router",
+                detected_labels=["router", "wireless"],
+            )
+        }
+    )
+    search_provider = StaticSearchProvider(
+        fixtures={
+            "LINKSYS WRT54G": [
+                {
+                    "title": "Linksys WRT54G overview",
+                    "snippet": "A wireless router series.",
+                    "url": "https://example.com/wrt54g",
+                }
+            ]
+        }
+    )
+
+    result = run_diagnostic_request(
+        request,
+        work_root=tmp_path,
+        vision_backend=vision_backend,
+        search_provider=search_provider,
+        synthesis_backend=FailingSynthesisBackend(),
+    )
+
+    assert result.search_hits[0].provider == "static"
+    assert result.datasheet_json is None
+    assert result.rendered_datasheet == ""
+    assert result.failures == [DiagnosticFailure(stage="synthesis", error="model crashed")]
