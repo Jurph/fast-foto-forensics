@@ -17,7 +17,8 @@ _VISION_PROMPT = """\
 Examine this image carefully. Return ONLY a JSON object with these fields:
 - "caption": a one-sentence description of what you see
 - "ocr_text": all visible text, transcribed exactly as it appears
-- "candidate_identifiers": list of serial numbers, model numbers, or part numbers found
+- "candidate_identifiers": list of model numbers or part numbers (e.g. "WRT54G", "OC200", "ER605")
+- "serial_numbers": list of serial numbers, MAC addresses, or other unique-to-this-unit identifiers
 - "vendor": manufacturer name if identifiable, otherwise ""
 - "object_class": general category (e.g. "wireless router", "GPU", "circuit board")
 - "detected_labels": list of all readable labels, markings, or stickers"""
@@ -151,6 +152,7 @@ class OllamaVisionBackend:
                 caption=data.get("caption", ""),
                 ocr_text=data.get("ocr_text", ""),
                 candidate_identifiers=data.get("candidate_identifiers", []),
+                serial_numbers=data.get("serial_numbers", []),
                 vendor=data.get("vendor", "") or None,
                 object_class=data.get("object_class", "") or None,
                 detected_labels=data.get("detected_labels", []),

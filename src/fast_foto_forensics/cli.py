@@ -23,23 +23,50 @@ from fast_foto_forensics.synthesis import HeuristicSynthesisBackend
 from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBackend, VisionBackend
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Create the top-level CLI parser."""
-    parser = argparse.ArgumentParser(prog="fff", description="Fast Foto Forensics")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    run_parser = subparsers.add_parser("run", help="Process a folder of evidence")
-    run_parser.add_argument("input_path")
-    run_parser.add_argument("--output", required=True)
-    run_parser.add_argument("--run-label", default="run-001")
-    run_parser.add_argument("--profile", default="default")
-    run_parser.add_argument(
+def _add_vision_args(parser: argparse.ArgumentParser) -> None:
+    """Add shared --vision-backend and --vision-model flags to a subparser."""
+    parser.add_argument(
         "--vision-backend",
         choices=("filename", "ollama"),
         default="filename",
         help="Vision backend: filename (heuristic) or ollama (real model)",
     )
-    run_parser.add_argument("--vision-model", default="qwen2.5vl:7b", help="Ollama model name")
+    parser.add_argument("--vision-model", default="qwen2.5vl:7b", help="Ollama model name")
+
+
+def _build_vision_backend(args: argparse.Namespace) -> VisionBackend:
+    """Instantiate the vision backend selected by CLI flags."""
+    if args.vision_backend == "ollama":
+        return OllamaVisionBackend(model=args.vision_model)
+    return FilenameVisionBackend()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Create the top-level CLI parser."""
+    parser = argparse.ArgumentParser(prog="fff", description="Fast Foto Forensics")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # --- scan: quick inventory table from a directory of images ---
+    scan_parser = subparsers.add_parser(
+        "scan",
+        help="Scan a folder of images and print an inventory table",
+    )
+    scan_parser.add_argument("input_path", help="Directory (or single file) to scan")
+    _add_vision_args(scan_parser)
+    scan_parser.add_argument(
+        "--format",
+        choices=("table", "csv", "json"),
+        default="table",
+        help="Output format (default: rich table)",
+    )
+
+    # --- run: full pipeline ---
+    run_parser = subparsers.add_parser("run", help="Process a folder of evidence")
+    run_parser.add_argument("input_path")
+    run_parser.add_argument("--output", required=True)
+    run_parser.add_argument("--run-label", default="run-001")
+    run_parser.add_argument("--profile", default="default")
+    _add_vision_args(run_parser)
     run_parser.add_argument(
         "--search-provider",
         choices=("static", "duckduckgo", "ddgs", "searxng"),
@@ -64,6 +91,99 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_scan(args: argparse.Namespace) -> int:
+    """Scan images and print an inventory table.
+
+    Calls the vision backend directly (not through the full pipeline) so
+    we get access to VisionResult.vendor and .object_class, which don't
+    survive the enrichment step onto EvidenceObservation.
+
+    All fields are passed through from the backend as-is — no heuristic
+    overrides.  If the backend returns empty fields, they show as blanks.
+    """
+    import logging
+
+    from fast_foto_forensics.ingest import ingest_path
+    from fast_foto_forensics.vision import VisionExtractionError
+
+    logger = logging.getLogger(__name__)
+    vision_backend = _build_vision_backend(args)
+    observations = list(ingest_path(Path(args.input_path)))
+
+    rows: list[dict[str, str]] = []
+    for obs in observations:
+        try:
+            result = vision_backend.extract(obs)
+        except VisionExtractionError as exc:
+            logger.warning("Skipping %s: %s", obs.source_path, exc)
+            continue
+
+        rows.append({
+            "filename": Path(obs.source_path).name,
+            "function": result.object_class or "",
+            "manufacturer": result.vendor or "",
+            "model_no": ", ".join(result.candidate_identifiers),
+            "serial": ", ".join(result.serial_numbers),
+        })
+
+    if not rows:
+        print("No supported images found.")
+        return 0
+
+    output_format = getattr(args, "format", "table")
+
+    if output_format == "json":
+        import json
+        print(json.dumps(rows, indent=2))
+        return 0
+
+    if output_format == "csv":
+        import csv
+        import io
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+        print(buf.getvalue(), end="")
+        return 0
+
+    # Default: rich table
+    try:
+        from rich.console import Console
+        from rich.table import Table
+    except ImportError:
+        # Graceful fallback if rich is not installed
+        header = f"{'Filename':<40} {'Function':<18} {'Manufacturer':<16} {'Model No.':<16} {'Serial / ID'}"
+        print(header)
+        print("-" * len(header))
+        for row in rows:
+            print(
+                f"{row['filename']:<40} {row['function']:<18} "
+                f"{row['manufacturer']:<16} {row['model_no']:<16} {row['serial']}"
+            )
+        return 0
+
+    table = Table(title="Evidence Inventory", show_lines=True)
+    table.add_column("Filename", style="cyan", no_wrap=True)
+    table.add_column("Function / Role", style="green")
+    table.add_column("Manufacturer", style="yellow")
+    table.add_column("Model No.", style="magenta")
+    table.add_column("Serial / Property ID", style="red")
+
+    for row in rows:
+        table.add_row(
+            row["filename"],
+            row["function"],
+            row["manufacturer"],
+            row["model_no"],
+            row["serial"],
+        )
+
+    console = Console()
+    console.print(table)
+    return 0
+
+
 def run_cli(argv: list[str] | None = None) -> int:
     """Execute the CLI for the provided argument vector."""
     parser = build_parser()
@@ -74,12 +194,11 @@ def run_cli(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(raw_args)
 
+    if args.command == "scan":
+        return _run_scan(args)
+
     if args.command == "run":
-        vision_backend: VisionBackend
-        if args.vision_backend == "ollama":
-            vision_backend = OllamaVisionBackend(model=args.vision_model)
-        else:
-            vision_backend = FilenameVisionBackend()
+        vision_backend = _build_vision_backend(args)
 
         search_provider: SearchProvider
         if args.offline or args.search_provider == "static":

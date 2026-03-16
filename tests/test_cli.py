@@ -115,3 +115,51 @@ def test_cli_run_with_ollama_backend_flag() -> None:
 
     assert exit_code == 0
     assert (output_dir / "ollama-demo" / "reports" / "report.md").exists()
+
+
+def test_cli_scan_prints_table(capsys) -> None:
+    """The scan subcommand should print an inventory table."""
+    input_dir = Path(".tmp") / "cli-scan-case"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "tp-link-OC200-router.jpg").write_bytes(b"router")
+    (input_dir / "cisco-SG300-switch.jpg").write_bytes(b"switch")
+
+    exit_code = main(["scan", str(input_dir)])
+    assert exit_code == 0
+
+    captured = capsys.readouterr().out
+    assert "tp-link-OC200-router.jpg" in captured
+    assert "cisco-SG300-switch.jpg" in captured
+
+
+def test_cli_scan_json_format(capsys) -> None:
+    """The scan --format=json subcommand should output parseable JSON."""
+    import json
+
+    input_dir = Path(".tmp") / "cli-scan-json-case"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "tp-link-OC200-router.jpg").write_bytes(b"router")
+
+    exit_code = main(["scan", str(input_dir), "--format", "json"])
+    assert exit_code == 0
+
+    rows = json.loads(capsys.readouterr().out)
+    assert isinstance(rows, list)
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "tp-link-OC200-router.jpg"
+    assert "model_no" in rows[0]
+    assert "serial" in rows[0]
+
+
+def test_cli_scan_csv_format(capsys) -> None:
+    """The scan --format=csv subcommand should output CSV with headers."""
+    input_dir = Path(".tmp") / "cli-scan-csv-case"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "device-A.jpg").write_bytes(b"a")
+
+    exit_code = main(["scan", str(input_dir), "--format", "csv"])
+    assert exit_code == 0
+
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert lines[0].strip() == "filename,function,manufacturer,model_no,serial"
+    assert "device-A.jpg" in lines[1]

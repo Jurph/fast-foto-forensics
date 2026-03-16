@@ -96,6 +96,7 @@ class VisionResult:
     caption: str
     ocr_text: str
     candidate_identifiers: list[str] = field(default_factory=list)
+    serial_numbers: list[str] = field(default_factory=list)
     vendor: str | None = None
     object_class: str | None = None
     detected_labels: list[str] = field(default_factory=list)
@@ -112,6 +113,7 @@ class VisionResult:
             "caption": self.caption,
             "ocr_text": self.ocr_text,
             "candidate_identifiers": list(self.candidate_identifiers),
+            "serial_numbers": list(self.serial_numbers),
             "vendor": self.vendor,
             "object_class": self.object_class,
             "detected_labels": list(self.detected_labels),
@@ -132,6 +134,11 @@ class VisionResult:
             candidate_identifiers=(
                 _require_list(data, "candidate_identifiers")
                 if "candidate_identifiers" in data
+                else []
+            ),
+            serial_numbers=(
+                _require_list(data, "serial_numbers")
+                if "serial_numbers" in data
                 else []
             ),
             vendor=_optional_str(data, "vendor"),
