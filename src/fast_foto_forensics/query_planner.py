@@ -20,15 +20,17 @@ Query tiers (highest value first)
    returns nothing, no harm done.
    Example: ``"Verizon G1A117060503877"``
 
-3. **Label queries** — substantive detected_labels (filtering out port
-   names and single-character noise) combined with vendor.
-   Example: ``"TP-Link Omada Hardware Controller"``
+3. **Fallback brand** — only when vendor is blank.  Attempts to extract
+   a brand from OCR/caption tokens using heuristics.
 
-4. **Fallback** — only when vendor is blank.  Attempts to extract a brand
-   from OCR/caption tokens using heuristics.
+4. **OCR blob** — the raw OCR text truncated to ~120 chars.  Even
+   boilerplate and port names can match user manuals or FCC filings.
 
-Vendor + object_class alone (e.g., "Verizon wireless router") is
-deliberately excluded — it's too vague to return useful results.
+Low-entropy queries are excluded entirely:
+- Vendor + object_class alone (e.g., "Verizon wireless router") is too
+  vague to return useful results.
+- Detected labels (sticker text like "Omada", "Reset") are not
+  high-entropy enough to be useful search terms on their own.
 """
 
 from __future__ import annotations
@@ -36,14 +38,6 @@ from __future__ import annotations
 from collections import defaultdict
 
 from fast_foto_forensics.models import EvidenceObservation, QueryCandidate, QueryPlan, tokenize_text
-
-# Labels that describe ports, buttons, or other noise — not useful as
-# search terms on their own.
-_NOISE_LABELS = {
-    "act", "cloud", "coax", "dc", "eth", "eth1", "eth2", "eth3", "eth4",
-    "lan", "led", "link", "poe", "power", "reset", "usb", "wan", "wlan",
-    "wps", "link/act",
-}
 
 # OCR fragments that are metadata prefixes, not searchable product info.
 _LOW_VALUE_OCR_TOKENS = {
@@ -104,32 +98,6 @@ def _record_candidate(
         if item not in candidate.provenance:
             candidate.provenance.append(item)
     candidate.score = score_buckets[key]
-
-
-def _substantive_labels(observation: EvidenceObservation) -> list[str]:
-    """Filter detected_labels to those worth searching for.
-
-    Keeps multi-word labels and single-word labels that aren't port names
-    or generic noise.
-    """
-    labels: list[str] = []
-    for label in observation.detected_labels:
-        stripped = label.strip()
-        if not stripped:
-            continue
-        # Multi-word labels like "Omada Hardware Controller" are almost
-        # always substantive product names.
-        if " " in stripped:
-            labels.append(stripped)
-            continue
-        # Single-word: skip port names and noise
-        if stripped.casefold() in _NOISE_LABELS:
-            continue
-        # Skip the vendor name itself — it'll already be in the query
-        if observation.vendor and stripped.casefold() == observation.vendor.casefold():
-            continue
-        labels.append(stripped)
-    return labels
 
 
 def _fallback_brand_tokens(observation: EvidenceObservation) -> list[str]:
@@ -212,22 +180,7 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                 " ".join(parts), provenance, 5.0,
             )
 
-        # --- Tier 3: substantive labels combined with vendor ---
-        good_labels = _substantive_labels(obs)
-        if good_labels:
-            parts = []
-            if vendor:
-                parts.append(vendor)
-            # Take up to 3 substantive labels
-            parts.extend(good_labels[:3])
-            _record_candidate(
-                candidates, score_buckets,
-                " ".join(parts),
-                ["labels", obs.evidence_id],
-                3.0,
-            )
-
-        # --- Tier 4: fallback when vendor is blank ---
+        # --- Tier 3: fallback when vendor is blank ---
         if not vendor:
             fallback_brands = _fallback_brand_tokens(obs)
             if fallback_brands:

@@ -58,10 +58,8 @@ def test_serial_numbers_searched_as_tier_two() -> None:
     assert "Verizon" in plan.selected_queries[0].text
 
 
-def test_substantive_labels_become_tier_three() -> None:
-    """Multi-word labels like 'Omada Hardware Controller' should generate
-    a search query, while port-name labels like 'LAN' should not appear
-    in the label-tier query (they may still appear in the OCR blob)."""
+def test_ocr_blob_is_last_resort() -> None:
+    """The raw OCR text should appear as a low-scoring fallback query."""
     obs = EvidenceObservation(
         evidence_id="img-003",
         source_path="evidence/controller.jpg",
@@ -79,16 +77,14 @@ def test_substantive_labels_become_tier_three() -> None:
 
     plan = build_query_plan([obs], max_queries=5)
 
-    # Find the label-tier query (provenance starts with "labels")
-    label_queries = [q for q in plan.selected_queries if "labels" in q.provenance]
-    assert len(label_queries) >= 1
-    label_text = label_queries[0].text.lower()
+    # The OCR blob should be the lowest-scored query
+    ocr_queries = [q for q in plan.selected_queries if "ocr_blob" in q.provenance]
+    assert len(ocr_queries) == 1
+    assert ocr_queries[0].score <= 1.0
 
-    # Substantive labels should appear in the label query
-    assert "omada" in label_text
-    # Port-name noise should not appear in the label query
-    assert "reset" not in label_text
-    assert "lan" not in label_text
+    # The identifier query should rank well above it
+    id_queries = [q for q in plan.selected_queries if "identifier" in q.provenance]
+    assert id_queries[0].score > ocr_queries[0].score
 
 
 def test_fallback_brand_extraction_when_vendor_is_blank() -> None:
