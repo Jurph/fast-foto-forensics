@@ -59,6 +59,9 @@ class EvidenceObservation:
     ocr_text: str = ""
     detected_labels: list[str] = field(default_factory=list)
     candidate_identifiers: list[str] = field(default_factory=list)
+    serial_numbers: list[str] = field(default_factory=list)
+    vendor: str = ""
+    object_class: str = ""
     analyst_hints: list[str] = field(default_factory=list)
 
     @classmethod
@@ -80,6 +83,13 @@ class EvidenceObservation:
                 if "candidate_identifiers" in data
                 else []
             ),
+            serial_numbers=(
+                _require_list(data, "serial_numbers")
+                if "serial_numbers" in data
+                else []
+            ),
+            vendor=_optional_str(data, "vendor") or "",
+            object_class=_optional_str(data, "object_class") or "",
             analyst_hints=_require_list(data, "analyst_hints") if "analyst_hints" in data else [],
         )
 

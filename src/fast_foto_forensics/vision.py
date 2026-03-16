@@ -172,6 +172,9 @@ def enrich_single(
     observation.ocr_text = result.ocr_text
     observation.detected_labels = list(result.detected_labels)
     observation.candidate_identifiers = list(result.candidate_identifiers)
+    observation.serial_numbers = list(result.serial_numbers)
+    observation.vendor = result.vendor or ""
+    observation.object_class = result.object_class or ""
     return observation
 
 
