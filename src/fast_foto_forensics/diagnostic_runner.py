@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import mimetypes
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,7 +17,11 @@ from fast_foto_forensics.models import EvidenceObservation, QueryPlan, SearchHit
 from fast_foto_forensics.query_planner import build_query_plan
 from fast_foto_forensics.reporting import render_item_dossier
 from fast_foto_forensics.search import SearchProvider
-from fast_foto_forensics.synthesis import SynthesisBackend, SynthesisFailure, synthesize_item_with_artifact
+from fast_foto_forensics.synthesis import (
+    SynthesisBackend,
+    SynthesisFailure,
+    synthesize_item_with_artifact,
+)
 from fast_foto_forensics.vision import VisionBackend
 
 
@@ -113,10 +120,17 @@ def _fetch_remote_image_bytes(image_url: str) -> bytes:
     return response.content
 
 
+def _build_preview_data_url(source_name: str, image_bytes: bytes) -> str:
+    """Build a browser-safe inline preview URL for the source image."""
+    media_type = mimetypes.guess_type(source_name)[0] or "application/octet-stream"
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{media_type};base64,{encoded}"
+
+
 def _materialize_request_image(
     request: DiagnosticRequest,
     work_root: Path,
-    fetch_image_bytes,
+    fetch_image_bytes: Callable[[str], bytes],
 ) -> Path:
     """Write the diagnostic source image into the working directory."""
     work_root.mkdir(parents=True, exist_ok=True)
@@ -197,7 +211,7 @@ def run_diagnostic_request(
     return DiagnosticResult(
         source_kind=request.source_kind,
         source_name=request.source_name,
-        source_preview_url=image_path.as_uri(),
+        source_preview_url=_build_preview_data_url(request.source_name, image_bytes),
         source_image_bytes=image_bytes,
         log_messages=log_messages,
         vision_json=vision_json,

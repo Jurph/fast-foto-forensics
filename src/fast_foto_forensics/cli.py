@@ -6,6 +6,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import uvicorn
+
 from fast_foto_forensics.pipeline import (
     compose_runs,
     rerender_run,
@@ -26,6 +28,7 @@ from fast_foto_forensics.synthesis import (
     SynthesisBackend,
 )
 from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBackend, VisionBackend
+from fast_foto_forensics.web_diagnostic import create_diagnostic_app
 
 
 def _add_vision_args(parser: argparse.ArgumentParser) -> None:
@@ -74,6 +77,17 @@ def _build_synthesis_backend(args: argparse.Namespace) -> SynthesisBackend:
     return OllamaDatasheetSynthesisBackend(model=args.synthesis_model)
 
 
+def _build_search_provider(args: argparse.Namespace) -> SearchProvider:
+    """Instantiate the search provider selected by CLI flags."""
+    if args.offline or args.search_provider == "static":
+        return StaticSearchProvider(fixtures={})
+    if args.search_provider == "searxng":
+        return SearXNGSearchProvider(instance_url=args.searxng_url, proxy_url=args.proxy)
+    if args.search_provider == "ddgs":
+        return DDGSSearchProvider(proxy=args.proxy)
+    return DuckDuckGoSearchProvider(proxy_url=args.proxy)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the top-level CLI parser."""
     parser = argparse.ArgumentParser(prog="fff", description="Fast Foto Forensics")
@@ -111,6 +125,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--proxy")
     run_parser.add_argument("--offline", action="store_true")
+
+    diagnostic_parser = subparsers.add_parser(
+        "web-diagnostic",
+        help="Launch a local single-image diagnostic web UI",
+    )
+    _add_vision_args(diagnostic_parser)
+    diagnostic_parser.set_defaults(vision_backend="ollama")
+    _add_synthesis_args(diagnostic_parser)
+    diagnostic_parser.set_defaults(synthesis_backend="ollama")
+    diagnostic_parser.add_argument(
+        "--search-provider",
+        choices=("static", "duckduckgo", "ddgs", "searxng"),
+        default="ddgs",
+    )
+    diagnostic_parser.add_argument(
+        "--searxng-url", default="http://localhost:8888", help="SearXNG instance URL"
+    )
+    diagnostic_parser.add_argument("--proxy")
+    diagnostic_parser.add_argument("--offline", action="store_true")
+    diagnostic_parser.add_argument("--host", default="127.0.0.1")
+    diagnostic_parser.add_argument("--port", type=int, default=8000)
+    diagnostic_parser.add_argument(
+        "--work-root",
+        default=str(Path(".tmp") / "web-diagnostic"),
+        help="Scratch directory for transient diagnostic runs",
+    )
+    diagnostic_parser.add_argument(
+        "--export-root",
+        default=str(Path("artifacts") / "diagnostic_exports"),
+        help="Directory for exported retry fixtures",
+    )
 
     worker_parser = subparsers.add_parser("worker", help="Run a queue worker")
     worker_parser.add_argument("queue_name", choices=("vision", "search"))
@@ -276,18 +321,7 @@ def run_cli(argv: list[str] | None = None) -> int:
     if args.command == "run":
         vision_backend = _build_vision_backend(args)
         synthesis_backend = _build_synthesis_backend(args)
-
-        search_provider: SearchProvider
-        if args.offline or args.search_provider == "static":
-            search_provider = StaticSearchProvider(fixtures={})
-        elif args.search_provider == "searxng":
-            search_provider = SearXNGSearchProvider(
-                instance_url=args.searxng_url, proxy_url=args.proxy
-            )
-        elif args.search_provider == "ddgs":
-            search_provider = DDGSSearchProvider(proxy=args.proxy)
-        else:
-            search_provider = DuckDuckGoSearchProvider(proxy_url=args.proxy)
+        search_provider = _build_search_provider(args)
         result = run_pipeline(
             input_path=Path(args.input_path),
             output_root=Path(args.output),
@@ -297,6 +331,18 @@ def run_cli(argv: list[str] | None = None) -> int:
             synthesis_backend=synthesis_backend,
         )
         _print_run_summary(result)
+        return 0
+
+    if args.command == "web-diagnostic":
+        app = create_diagnostic_app(
+            work_root=Path(args.work_root),
+            export_root=Path(args.export_root),
+            vision_backend=_build_vision_backend(args),
+            search_provider=_build_search_provider(args),
+            synthesis_backend=_build_synthesis_backend(args),
+        )
+        print(f"Launching diagnostic UI on http://{args.host}:{args.port}")
+        uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
     if args.command == "worker":

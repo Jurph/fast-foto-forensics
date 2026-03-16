@@ -327,3 +327,32 @@ def test_cli_scan_csv_format(capsys) -> None:
     lines = capsys.readouterr().out.strip().splitlines()
     assert lines[0].strip() == "filename,function,manufacturer,model_no,serial"
     assert "device-A.jpg" in lines[1]
+
+
+def test_cli_web_diagnostic_launches_local_server() -> None:
+    """The web-diagnostic subcommand should launch the local prototype app."""
+    with (
+        patch("fast_foto_forensics.cli.create_diagnostic_app", return_value=object()) as create_app,
+        patch("fast_foto_forensics.cli.uvicorn.run") as run_server,
+    ):
+        exit_code = main(
+            [
+                "web-diagnostic",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8123",
+                "--work-root",
+                ".tmp/web-diagnostic-test",
+                "--export-root",
+                "artifacts/diagnostic-exports-test",
+                "--offline",
+            ]
+        )
+
+    assert exit_code == 0
+    create_app.assert_called_once()
+    _, kwargs = create_app.call_args
+    assert kwargs["work_root"] == Path(".tmp/web-diagnostic-test")
+    assert kwargs["export_root"] == Path("artifacts/diagnostic-exports-test")
+    run_server.assert_called_once_with(create_app.return_value, host="127.0.0.1", port=8123)

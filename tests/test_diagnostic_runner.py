@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 
-from fast_foto_forensics.models import QueryCandidate, QueryPlan, SearchHit, VisionResult
-from fast_foto_forensics.export_fixture import export_diagnostic_fixture
-from fast_foto_forensics.search import StaticSearchProvider
-from fast_foto_forensics.synthesis import ReplaySynthesisBackend
-from fast_foto_forensics.vision import StaticVisionBackend
 from fast_foto_forensics.diagnostic_runner import (
     DiagnosticFailure,
     DiagnosticRequest,
@@ -17,6 +12,11 @@ from fast_foto_forensics.diagnostic_runner import (
     run_diagnostic_request,
     summarize_vision_result,
 )
+from fast_foto_forensics.export_fixture import export_diagnostic_fixture
+from fast_foto_forensics.models import QueryCandidate, QueryPlan, SearchHit, VisionResult
+from fast_foto_forensics.search import StaticSearchProvider
+from fast_foto_forensics.synthesis import ReplaySynthesisBackend
+from fast_foto_forensics.vision import StaticVisionBackend
 
 
 def test_diagnostic_request_from_upload_bytes_preserves_filename_and_content() -> None:

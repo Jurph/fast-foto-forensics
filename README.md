@@ -105,3 +105,32 @@ uv run --locked --extra dev ruff format src tests
 uv run --locked --extra dev mypy src
 uv run --locked fast-foto-forensics
 ```
+
+## Diagnostic web UI
+
+For repeated single-image user testing, the repo now includes a local diagnostic web UI that
+runs the real pipeline and shows intermediate artifacts section-by-section.
+
+Install the needed extras:
+
+```bash
+.\scripts\uvw.cmd sync --extra dev --extra vision_ollama --extra search_ddgs
+```
+
+Launch the prototype:
+
+```bash
+.\scripts\uvw.cmd run --extra dev --extra vision_ollama --extra search_ddgs fff web-diagnostic
+```
+
+Then open `http://127.0.0.1:8000/` in a browser.
+
+Useful flags:
+
+```bash
+.\scripts\uvw.cmd run --extra dev --extra vision_ollama --extra search_ddgs fff web-diagnostic --host 127.0.0.1 --port 8123
+.\scripts\uvw.cmd run --extra dev --extra vision_ollama fff web-diagnostic --offline
+```
+
+The UI stays stateless unless you click `Export`, which copies the source image and a metadata
+sidecar into `artifacts/diagnostic_exports/` for later retry.

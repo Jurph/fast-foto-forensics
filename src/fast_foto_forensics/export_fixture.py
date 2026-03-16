@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fast_foto_forensics.diagnostic_runner import DiagnosticRequest, DiagnosticResult
@@ -30,14 +30,14 @@ def export_diagnostic_fixture(
         raise ValueError("diagnostic result is missing source image bytes")
 
     export_root.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     source_name = Path(request.source_name).name or "diagnostic-image"
     image_path = export_root / f"{timestamp}-{source_name}"
     metadata_path = image_path.with_suffix(f"{image_path.suffix}.json")
 
     image_path.write_bytes(result.source_image_bytes)
     payload = {
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "source_kind": request.source_kind,
         "source_name": request.source_name,
         "source_url": request.image_url,
