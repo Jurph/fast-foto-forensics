@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
+import struct
+import zlib
 from pathlib import Path
 
 import pytest
@@ -20,6 +23,56 @@ from fast_foto_forensics.vision import (
     enrich_single,
     extract_with_cache,
 )
+
+
+def _make_test_png(text: str | None = None, size: int = 128) -> bytes:
+    """Build a valid white RGB PNG in memory.
+
+    When *text* is provided (e.g. ``"TEST"``), Pillow renders it centered
+    in black on the white background so the vision model has something to OCR.
+    Falls back to a plain white image when Pillow is unavailable or *text*
+    is ``None``.
+    """
+    import io
+
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        # Pillow not installed — fall back to raw struct-based PNG
+        raw_rows = b""
+        for _ in range(size):
+            raw_rows += b"\x00" + b"\xff" * (size * 3)
+
+        def _chunk(tag: bytes, data: bytes) -> bytes:
+            payload = tag + data
+            return (
+                struct.pack(">I", len(data))
+                + payload
+                + struct.pack(">I", zlib.crc32(payload) & 0xFFFFFFFF)
+            )
+
+        ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+        idat = zlib.compress(raw_rows)
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + _chunk(b"IHDR", ihdr)
+            + _chunk(b"IDAT", idat)
+            + _chunk(b"IEND", b"")
+        )
+
+    img = Image.new("RGB", (size, size), "white")
+    if text:
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype("arial.ttf", size // 3)
+        except OSError:
+            font = ImageFont.load_default()
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text(((size - tw) / 2, (size - th) / 2), text, fill="black", font=font)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _sample_fixture() -> VisionResult:
@@ -170,13 +223,7 @@ class TestOllamaVisionBackend:
     def _observation_with_real_file(self, tmp_path) -> EvidenceObservation:
         """Create a tiny PNG file and return an observation pointing at it."""
         img = tmp_path / "test.png"
-        # Minimal valid 1x1 white PNG
-        img.write_bytes(
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
-            b"\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
-            b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
-        )
+        img.write_bytes(_make_test_png())
         return EvidenceObservation(
             evidence_id="img-010",
             source_path=str(img),
@@ -449,15 +496,9 @@ _HAS_OLLAMA = importlib.util.find_spec("ollama") is not None
 @pytest.mark.skipif(not _HAS_OLLAMA, reason="ollama package not installed")
 class TestOllamaIntegration:
     def test_round_trip_with_real_model(self, tmp_path: Path) -> None:
-        """Send a tiny test image to Ollama and verify structured output."""
-        # Minimal valid 1x1 white PNG
+        """Send a 128x128 image with 'TEST' to Ollama and verify OCR reads it back."""
         test_image = tmp_path / "test.png"
-        test_image.write_bytes(
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
-            b"\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
-            b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
-        )
+        test_image.write_bytes(_make_test_png(text="TEST"))
 
         observation = EvidenceObservation(
             evidence_id="integration-test",
@@ -469,9 +510,13 @@ class TestOllamaIntegration:
         backend = OllamaVisionBackend(model="qwen2.5vl:7b")
         try:
             result = backend.extract(observation)
-            assert isinstance(result, VisionResult)
-            assert result.backend_name == "ollama"
-            assert result.evidence_id == "integration-test"
         except VisionExtractionError:
-            # Model may not parse a 1x1 PNG meaningfully, but we verify the round-trip
             pytest.skip("Ollama returned unparseable response for test image")
+
+        assert isinstance(result, VisionResult)
+        assert result.backend_name == "ollama"
+        assert result.evidence_id == "integration-test"
+        # The model should OCR the word "TEST" from the image
+        assert "TEST" in result.ocr_text.upper(), (
+            f"Expected 'TEST' in OCR output, got: {result.ocr_text!r}"
+        )

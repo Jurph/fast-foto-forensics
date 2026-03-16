@@ -2,73 +2,132 @@
 
 Builds ranked web-search queries from enriched EvidenceObservations.
 
-The planner trusts the structured fields that the vision backend already
-extracted (vendor, object_class, candidate_identifiers) rather than
-re-deriving them from raw OCR text.  It only falls back to token-level
-heuristics when those fields are empty — e.g., when using the lightweight
-FilenameVisionBackend that can't identify a vendor.
+Core idea
+~~~~~~~~~
+A token is **alphanumeric** if it contains both letters and digits (e.g.,
+"OC200", "G1A117060503877", "WRT54G", "GTX480").  These are high-entropy
+and likely to be model numbers, serial numbers, or part codes.  Everything
+else is a **context word** (e.g., "Verizon", "router", "Omada").
 
-Query tiers (highest value first)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-1. **Identifier queries** — one per candidate_identifier, combined with
-   vendor and object_class when available.
-   Example: ``"TP-Link OC200 wireless router"``
+The planner builds queries by pairing each context word with each
+alphanumeric: ``"Verizon OC200"``, ``"Omada OC200"``, ``"Verizon ER605"``,
+etc.  The search engine decides which pairings are meaningful.
 
-2. **Serial number queries** — one per serial_number, combined with
-   vendor.  We don't try to guess whether a serial is "really" a model
-   number — if searching for it returns product pages, great.  If it
-   returns nothing, no harm done.
-   Example: ``"Verizon G1A117060503877"``
+When vendor is known from the vision backend, it's always included as the
+first context word in every query, giving those queries a score boost.
 
-3. **Fallback brand** — only when vendor is blank.  Attempts to extract
-   a brand from OCR/caption tokens using heuristics.
-
-4. **OCR blob** — the raw OCR text truncated to ~120 chars.  Even
-   boilerplate and port names can match user manuals or FCC filings.
-
-Low-entropy queries are excluded entirely:
-- Vendor + object_class alone (e.g., "Verizon wireless router") is too
-  vague to return useful results.
-- Detected labels (sticker text like "Omada", "Reset") are not
-  high-entropy enough to be useful search terms on their own.
+As a last resort, the raw OCR blob is included as a low-scoring fallback.
 """
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 
-from fast_foto_forensics.models import EvidenceObservation, QueryCandidate, QueryPlan, tokenize_text
-
-# OCR fragments that are metadata prefixes, not searchable product info.
-_LOW_VALUE_OCR_TOKENS = {
-    "fcc", "id", "mac", "pn", "part", "rev", "serial", "sn", "ssid", "ver",
-    "hw", "firmware", "version", "shipped", "note", "important", "designed",
-    "specifically", "impact", "performance", "services", "use", "other",
-    "may", "network",
-}
-
-_STOPWORDS = {
-    "and", "for", "from", "the", "this", "that", "with", "into", "onto",
-    "over", "under", "near", "blue", "dusty", "old", "tall", "small",
-    "large", "shelf", "workbench", "various", "cables", "connected",
-    "back", "panel", "front", "side", "view", "image", "photo",
-}
+from fast_foto_forensics.models import EvidenceObservation, QueryCandidate, QueryPlan
 
 
-def _unique_terms(parts: list[str]) -> list[str]:
-    """Preserve order while deduplicating terms case-insensitively."""
-    unique_parts: list[str] = []
-    seen: set[str] = set()
-    for part in parts:
-        value = part.strip()
-        if not value:
+def is_alphanumeric(token: str) -> bool:
+    """True if the token contains both letters and digits.
+
+    These tokens are high-entropy — likely model numbers, serial numbers,
+    part codes, MAC addresses, firmware versions, etc.  Pure-alpha tokens
+    ("Verizon", "router") and pure-numeric tokens ("2024", "001") are not
+    alphanumeric by this definition.
+
+    >>> is_alphanumeric("OC200")
+    True
+    >>> is_alphanumeric("G1A117060503877")
+    True
+    >>> is_alphanumeric("Verizon")
+    False
+    >>> is_alphanumeric("12345")
+    False
+    >>> is_alphanumeric("20.C0.47.2F.F9.0F")
+    True
+    """
+    has_letter = False
+    has_digit = False
+    for char in token:
+        if char.isalpha():
+            has_letter = True
+        elif char.isdigit():
+            has_digit = True
+        if has_letter and has_digit:
+            return True
+    return False
+
+
+def _extract_tokens(text: str) -> list[str]:
+    """Split text into tokens on whitespace and common delimiters.
+
+    Preserves tokens like "20.C0.47.2F.F9.0F" (MAC addresses) and
+    "rev.1.03" as single tokens, but splits on newlines, commas, and
+    other obvious boundaries.
+    """
+    # Split on whitespace and newlines, keep non-empty
+    return [t for t in re.split(r"[\s,;]+", text) if t.strip()]
+
+
+def _gather_alphanumerics_and_words(
+    obs: EvidenceObservation,
+) -> tuple[list[str], list[str]]:
+    """Collect all unique alphanumeric tokens and context words from an observation.
+
+    Sources (in priority order):
+    - candidate_identifiers and serial_numbers (already extracted by vision)
+    - detected_labels
+    - ocr_text
+    - caption
+    - vendor and object_class (if set)
+
+    Returns (alphanumerics, words) — both deduplicated, order preserved.
+    """
+    all_tokens: list[str] = []
+
+    # Start with the vision model's structured output
+    all_tokens.extend(obs.candidate_identifiers)
+    all_tokens.extend(obs.serial_numbers)
+    all_tokens.extend(obs.detected_labels)
+
+    # Add OCR and caption tokens
+    all_tokens.extend(_extract_tokens(obs.ocr_text))
+    all_tokens.extend(_extract_tokens(obs.caption))
+
+    # Separate into alphanumerics and words
+    alphanum_seen: set[str] = set()
+    word_seen: set[str] = set()
+    alphanumerics: list[str] = []
+    words: list[str] = []
+
+    for token in all_tokens:
+        stripped = token.strip()
+        if not stripped or len(stripped) < 2:
             continue
-        key = value.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        unique_parts.append(value)
-    return unique_parts
+        key = stripped.casefold()
+
+        if is_alphanumeric(stripped):
+            if key not in alphanum_seen:
+                alphanum_seen.add(key)
+                alphanumerics.append(stripped)
+        else:
+            # Skip pure-digit tokens ("2024", "001")
+            if stripped.isdigit():
+                continue
+            if key not in word_seen:
+                word_seen.add(key)
+                words.append(stripped)
+
+    # Ensure vendor and object_class are in the word list if set
+    # (they may already be there from OCR/labels, but ensure presence)
+    if obs.vendor and obs.vendor.casefold() not in word_seen:
+        words.insert(0, obs.vendor)
+        word_seen.add(obs.vendor.casefold())
+    if obs.object_class and obs.object_class.casefold() not in word_seen:
+        words.append(obs.object_class)
+        word_seen.add(obs.object_class.casefold())
+
+    return alphanumerics, words
 
 
 def _record_candidate(
@@ -79,15 +138,13 @@ def _record_candidate(
     score: float,
 ) -> None:
     """Accumulate scores and merge provenance for one normalized query."""
-    normalized_terms = _unique_terms(text.split())
-    if not normalized_terms:
+    key = text.casefold()
+    if not key.strip():
         return
-    normalized_text = " ".join(normalized_terms)
-    key = normalized_text.casefold()
     score_buckets[key] += score
     if key not in candidates:
         candidates[key] = QueryCandidate(
-            text=normalized_text,
+            text=text,
             provenance=list(provenance),
             score=score_buckets[key],
         )
@@ -100,111 +157,35 @@ def _record_candidate(
     candidate.score = score_buckets[key]
 
 
-def _fallback_brand_tokens(observation: EvidenceObservation) -> list[str]:
-    """Last-resort brand extraction from OCR/caption when vendor is blank.
-
-    Only called when the vision backend didn't identify a vendor (e.g.,
-    FilenameVisionBackend).  Scans OCR and caption tokens for anything
-    that isn't a known stopword, noise token, or identifier.
-    """
-    identifier_tokens = {
-        token.casefold() for token in tokenize_text(*observation.candidate_identifiers)
-    }
-    label_tokens = {
-        token.casefold() for token in tokenize_text(*observation.detected_labels)
-    }
-    exclude = _STOPWORDS | _LOW_VALUE_OCR_TOKENS | identifier_tokens | label_tokens
-
-    seen: set[str] = set()
-    brands: list[str] = []
-    for token in tokenize_text(observation.ocr_text, observation.caption):
-        key = token.casefold()
-        if key in exclude or key in seen or key.isdigit():
-            continue
-        seen.add(key)
-        brands.append(token)
-        if len(brands) >= 2:
-            break
-    return brands
-
-
 def build_query_plan(observations: list[EvidenceObservation], max_queries: int = 5) -> QueryPlan:
-    """Rank a small set of high-value queries from extracted evidence.
+    """Build search queries by pairing context words with alphanumeric tokens.
 
-    Every alphanumeric string the vision model found gets searched.  We
-    don't try to classify identifiers as "model" vs. "serial" — that's
-    the search engine's job.  If a query returns product pages, it was a
-    model number.  If it returns nothing, it was a serial.  Either way,
-    the cost of one extra query is low.
+    For each observation, every context word is paired with every
+    alphanumeric token.  Queries that include the vendor get a score
+    boost.  The raw OCR blob is included as a low-scoring fallback.
     """
     candidates: dict[str, QueryCandidate] = {}
     score_buckets: dict[str, float] = defaultdict(float)
 
     for obs in observations:
-        vendor = obs.vendor
-        obj_class = obs.object_class
+        alphanumerics, words = _gather_alphanumerics_and_words(obs)
+        vendor_lower = obs.vendor.casefold() if obs.vendor else ""
 
-        # --- Tier 1: candidate_identifiers (highest value) ---
-        # These are the alphanumeric strings the vision model flagged as
-        # model numbers or part numbers.  Paired with vendor + object_class.
-        for identifier in obs.candidate_identifiers:
-            parts = []
-            provenance = ["identifier", obs.evidence_id]
-            if vendor:
-                parts.append(vendor)
-                provenance.append(f"vendor:{vendor}")
-            parts.append(identifier)
-            if obj_class:
-                parts.append(obj_class)
-                provenance.append(f"class:{obj_class}")
-
-            _record_candidate(
-                candidates, score_buckets,
-                " ".join(parts), provenance, 10.0,
-            )
-
-        # --- Tier 2: serial_numbers (still worth searching) ---
-        # We don't know if these are "really" serials or model numbers.
-        # The vision model's classification is a guess.  Searching for
-        # them costs one query each, and the results disambiguate for us.
-        for serial in obs.serial_numbers:
-            parts = []
-            provenance = ["serial", obs.evidence_id]
-            if vendor:
-                parts.append(vendor)
-                provenance.append(f"vendor:{vendor}")
-            parts.append(serial)
-
-            _record_candidate(
-                candidates, score_buckets,
-                " ".join(parts), provenance, 5.0,
-            )
-
-        # --- Tier 3: fallback when vendor is blank ---
-        if not vendor:
-            fallback_brands = _fallback_brand_tokens(obs)
-            if fallback_brands:
-                parts = list(fallback_brands)
-                if obj_class:
-                    parts.append(obj_class)
-                elif obs.detected_labels:
-                    parts.append(obs.detected_labels[0])
+        # --- Cross-product: each word × each alphanumeric ---
+        for word in words:
+            for alphanum in alphanumerics:
+                query_text = f"{word} {alphanum}"
+                # Queries anchored by vendor are more valuable
+                score = 5.0 if word.casefold() == vendor_lower else 2.0
                 _record_candidate(
                     candidates, score_buckets,
-                    " ".join(parts),
-                    ["fallback_brand", obs.evidence_id],
-                    1.0,
+                    query_text,
+                    ["word_x_alphanum", obs.evidence_id],
+                    score,
                 )
 
-        # --- Tier 5: raw OCR text (kitchen sink) ---
-        # If we're out of structured data, the OCR blob itself might match
-        # user manuals, FCC filings, or forum posts.  Even "boring" tokens
-        # like port names can land hits when combined — "USB Reset LAN WAN
-        # Coax" is a distinctive enough fingerprint.  Truncate to keep it
-        # within a reasonable query length.
+        # --- OCR blob fallback (kitchen sink) ---
         if obs.ocr_text.strip():
-            # Take the first ~120 chars — enough for a search engine to
-            # work with, short enough to not be rejected as too long.
             truncated = obs.ocr_text.strip().replace("\n", " ")[:120].strip()
             _record_candidate(
                 candidates, score_buckets,

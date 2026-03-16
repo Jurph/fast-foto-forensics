@@ -3,12 +3,31 @@
 from __future__ import annotations
 
 from fast_foto_forensics.models import EvidenceObservation
-from fast_foto_forensics.query_planner import build_query_plan
+from fast_foto_forensics.query_planner import build_query_plan, is_alphanumeric
 
 
-def test_identifier_query_uses_vendor_and_object_class() -> None:
-    """When vendor and object_class are set, the top query should combine them
-    with the identifier — no heuristic guessing needed."""
+# --- is_alphanumeric tests ---
+
+def test_alphanumeric_model_number() -> None:
+    assert is_alphanumeric("OC200") is True
+
+def test_alphanumeric_serial() -> None:
+    assert is_alphanumeric("G1A117060503877") is True
+
+def test_alphanumeric_mac_address() -> None:
+    assert is_alphanumeric("20.C0.47.2F.F9.0F") is True
+
+def test_pure_alpha_not_alphanumeric() -> None:
+    assert is_alphanumeric("Verizon") is False
+
+def test_pure_digit_not_alphanumeric() -> None:
+    assert is_alphanumeric("12345") is False
+
+
+# --- Cross-product query building ---
+
+def test_vendor_anchored_query_scores_highest() -> None:
+    """When vendor is set, vendor × alphanumeric queries should score 5.0."""
     obs = EvidenceObservation(
         evidence_id="img-001",
         source_path="evidence/router.jpg",
@@ -23,18 +42,17 @@ def test_identifier_query_uses_vendor_and_object_class() -> None:
         object_class="wireless router",
     )
 
-    plan = build_query_plan([obs], max_queries=3)
+    plan = build_query_plan([obs], max_queries=5)
 
     top = plan.selected_queries[0]
-    assert top.text == "Linksys WRT54G wireless router"
-    assert "identifier" in top.provenance
-    assert f"vendor:Linksys" in top.provenance
-    assert f"class:wireless router" in top.provenance
+    # Vendor-anchored query should be at the top with score 5.0
+    assert "linksys" in top.text.lower()
+    assert "wrt54g" in top.text.lower()
+    assert top.score == 5.0
 
 
-def test_serial_numbers_searched_as_tier_two() -> None:
-    """Serial numbers should be searched — the search engine disambiguates
-    whether they're really serials or misclassified model numbers."""
+def test_serial_numbers_paired_with_vendor() -> None:
+    """Serial numbers are alphanumeric, so they get paired with context words."""
     obs = EvidenceObservation(
         evidence_id="img-002",
         source_path="evidence/router-back.jpg",
@@ -52,10 +70,11 @@ def test_serial_numbers_searched_as_tier_two() -> None:
 
     plan = build_query_plan([obs], max_queries=5)
 
-    # Serial should appear as a query — paired with vendor
+    # The serial should appear paired with vendor
     assert len(plan.selected_queries) >= 1
-    assert "G1A117060503877" in plan.selected_queries[0].text
-    assert "Verizon" in plan.selected_queries[0].text
+    top = plan.selected_queries[0]
+    assert "G1A117060503877" in top.text
+    assert "Verizon" in top.text
 
 
 def test_ocr_blob_is_last_resort() -> None:
@@ -75,21 +94,20 @@ def test_ocr_blob_is_last_resort() -> None:
         object_class="wireless router",
     )
 
-    plan = build_query_plan([obs], max_queries=5)
+    plan = build_query_plan([obs], max_queries=30)
 
-    # The OCR blob should be the lowest-scored query
+    # The OCR blob should exist and have score <= 1.0
     ocr_queries = [q for q in plan.selected_queries if "ocr_blob" in q.provenance]
     assert len(ocr_queries) == 1
     assert ocr_queries[0].score <= 1.0
 
-    # The identifier query should rank well above it
-    id_queries = [q for q in plan.selected_queries if "identifier" in q.provenance]
-    assert id_queries[0].score > ocr_queries[0].score
+    # The vendor-anchored cross-product query should rank above it
+    top = plan.selected_queries[0]
+    assert top.score > ocr_queries[0].score
 
 
-def test_fallback_brand_extraction_when_vendor_is_blank() -> None:
-    """When vendor is empty (e.g., filename backend), fall back to
-    extracting brand tokens from OCR/caption text."""
+def test_fallback_when_vendor_is_blank() -> None:
+    """When vendor is empty, other context words still pair with alphanumerics."""
     obs = EvidenceObservation(
         evidence_id="img-004",
         source_path="evidence/router.jpg",
@@ -100,67 +118,16 @@ def test_fallback_brand_extraction_when_vendor_is_blank() -> None:
         ocr_text="NVIDIA GTX 480",
         detected_labels=["gpu"],
         candidate_identifiers=["GTX 480"],
-        vendor="",  # no vendor from vision
-        object_class="",  # no object_class either
+        vendor="",
+        object_class="",
     )
 
-    plan = build_query_plan([obs], max_queries=3)
+    plan = build_query_plan([obs], max_queries=5)
 
-    # Should still produce queries — the fallback should find "nvidia"
+    # Should still produce queries from context words × alphanumerics
     assert len(plan.selected_queries) >= 1
     all_text = " ".join(q.text for q in plan.selected_queries).lower()
     assert "nvidia" in all_text or "gtx" in all_text
-
-
-def test_vendor_plus_class_alone_not_emitted() -> None:
-    """Vendor + object_class alone (e.g. 'Verizon wireless router') is too
-    vague to be useful — the planner should not emit it as a query."""
-    obs = EvidenceObservation(
-        evidence_id="img-005",
-        source_path="evidence/router-back.jpg",
-        media_kind="image",
-        sha256="mno345",
-        order_index=4,
-        caption="Back panel of a Verizon router.",
-        ocr_text="Verizon Fios",
-        detected_labels=["USB", "Reset", "LAN"],
-        candidate_identifiers=[],
-        serial_numbers=[],
-        vendor="Verizon",
-        object_class="wireless router",
-    )
-
-    plan = build_query_plan([obs], max_queries=5)
-
-    # With no identifiers, no serials, and only noise labels, there's
-    # nothing worth searching for.  The planner should not emit
-    # "Verizon wireless router" as a query.
-    for q in plan.selected_queries:
-        assert q.text != "Verizon wireless router"
-
-
-def test_noise_words_excluded_from_queries() -> None:
-    """Words like 'various', 'connected', 'cables' should never appear."""
-    obs = EvidenceObservation(
-        evidence_id="img-006",
-        source_path="evidence/controller.jpg",
-        media_kind="image",
-        sha256="pqr678",
-        order_index=5,
-        caption="A TP-Link controller with various cables connected.",
-        ocr_text="tp-link Omada",
-        detected_labels=["tp-link", "Omada"],
-        candidate_identifiers=["OC200"],
-        vendor="TP-Link",
-        object_class="wireless router",
-    )
-
-    plan = build_query_plan([obs], max_queries=5)
-    all_text = " ".join(q.text for q in plan.selected_queries).lower()
-
-    assert "various" not in all_text
-    assert "cables" not in all_text
-    assert "connected" not in all_text
 
 
 def test_max_queries_cap_is_respected() -> None:
@@ -182,3 +149,73 @@ def test_max_queries_cap_is_respected() -> None:
 
     plan = build_query_plan([obs], max_queries=2)
     assert len(plan.selected_queries) <= 2
+
+
+def test_analyst_hints_included() -> None:
+    """Analyst hints should appear as a query."""
+    obs = EvidenceObservation(
+        evidence_id="img-008",
+        source_path="evidence/device.jpg",
+        media_kind="image",
+        sha256="vwx234",
+        order_index=7,
+        caption="A Linksys router.",
+        ocr_text="WRT54G LINKSYS",
+        detected_labels=["router"],
+        candidate_identifiers=["WRT54G"],
+        vendor="Linksys",
+        object_class="wireless router",
+        analyst_hints=["home lab equipment"],
+    )
+
+    plan = build_query_plan([obs], max_queries=10)
+
+    hint_queries = [q for q in plan.selected_queries if "analyst_hint" in q.provenance]
+    assert len(hint_queries) == 1
+
+
+def test_cross_product_generates_multiple_queries() -> None:
+    """Multiple context words × multiple alphanumerics = many queries."""
+    obs = EvidenceObservation(
+        evidence_id="img-009",
+        source_path="evidence/controller.jpg",
+        media_kind="image",
+        sha256="yz0123",
+        order_index=8,
+        caption="An Omada controller.",
+        ocr_text="tp-link OC200 ER605",
+        detected_labels=["tp-link", "Omada"],
+        candidate_identifiers=["OC200", "ER605"],
+        vendor="TP-Link",
+        object_class="controller",
+    )
+
+    plan = build_query_plan([obs], max_queries=20)
+
+    # Should have at least vendor × 2 alphanumerics = 2 vendor queries
+    texts = [q.text for q in plan.selected_queries]
+    vendor_queries = [t for t in texts if "tp-link" in t.lower()]
+    assert len(vendor_queries) >= 2
+
+
+def test_dedup_prevents_duplicate_queries() -> None:
+    """Same word+alphanum pair from different sources should merge, not duplicate."""
+    obs = EvidenceObservation(
+        evidence_id="img-010",
+        source_path="evidence/device.jpg",
+        media_kind="image",
+        sha256="abc999",
+        order_index=9,
+        caption="Linksys WRT54G router.",
+        ocr_text="LINKSYS WRT54G",
+        detected_labels=["Linksys"],
+        candidate_identifiers=["WRT54G"],
+        vendor="Linksys",
+        object_class="router",
+    )
+
+    plan = build_query_plan([obs], max_queries=20)
+
+    # "Linksys WRT54G" should appear only once despite multiple sources
+    texts_lower = [q.text.casefold() for q in plan.selected_queries]
+    assert texts_lower.count("linksys wrt54g") == 1
