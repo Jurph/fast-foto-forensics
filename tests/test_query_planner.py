@@ -5,26 +5,31 @@ from __future__ import annotations
 from fast_foto_forensics.models import EvidenceObservation
 from fast_foto_forensics.query_planner import build_query_plan, is_alphanumeric
 
-
 # --- is_alphanumeric tests ---
+
 
 def test_alphanumeric_model_number() -> None:
     assert is_alphanumeric("OC200") is True
 
+
 def test_alphanumeric_serial() -> None:
     assert is_alphanumeric("G1A117060503877") is True
+
 
 def test_alphanumeric_mac_address() -> None:
     assert is_alphanumeric("20.C0.47.2F.F9.0F") is True
 
+
 def test_pure_alpha_not_alphanumeric() -> None:
     assert is_alphanumeric("Verizon") is False
+
 
 def test_pure_digit_not_alphanumeric() -> None:
     assert is_alphanumeric("12345") is False
 
 
 # --- Cross-product query building ---
+
 
 def test_vendor_anchored_query_scores_highest() -> None:
     """When vendor is set, vendor × alphanumeric queries should score 5.0."""
@@ -87,8 +92,7 @@ def test_ocr_blob_is_last_resort() -> None:
         order_index=2,
         caption="A TP-Link Omada hardware controller.",
         ocr_text="tp-link Omada\nOmada Hardware Controller\nLAN\nWAN\nReset",
-        detected_labels=["tp-link", "Omada", "Omada Hardware Controller",
-                         "LAN", "WAN", "Reset"],
+        detected_labels=["tp-link", "Omada", "Omada Hardware Controller", "LAN", "WAN", "Reset"],
         candidate_identifiers=["OC200"],
         vendor="TP-Link",
         object_class="wireless router",

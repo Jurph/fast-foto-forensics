@@ -14,12 +14,17 @@ from fast_foto_forensics.models import (
     ItemDatasheet,
     QueryPlan,
     SearchHit,
+    SynthesisArtifact,
 )
 from fast_foto_forensics.query_planner import build_query_plan
 from fast_foto_forensics.reporting import render_composed_summary, render_item_dossier
 from fast_foto_forensics.search import SearchProvider
 from fast_foto_forensics.storage import RunStore
-from fast_foto_forensics.synthesis import SynthesisBackend, synthesize_item
+from fast_foto_forensics.synthesis import (
+    SynthesisBackend,
+    SynthesisFailure,
+    synthesize_item_with_artifact,
+)
 from fast_foto_forensics.tagging import build_tag_set, write_tag_sidecar
 from fast_foto_forensics.vision import VisionBackend, enrich_observations
 
@@ -99,6 +104,7 @@ def _write_cluster_artifacts(
     query_plan: QueryPlan,
     hits: list[SearchHit],
     datasheet: ItemDatasheet,
+    synthesis_artifact: SynthesisArtifact,
 ) -> None:
     cluster_prefix = f"clusters/{cluster.cluster_id}"
     store.write_json_artifact(f"{cluster_prefix}/query-plan.json", asdict(query_plan))
@@ -107,6 +113,7 @@ def _write_cluster_artifacts(
         {"hits": [asdict(hit) for hit in hits]},
     )
     store.write_json_artifact(f"{cluster_prefix}/datasheet.json", asdict(datasheet))
+    store.write_json_artifact(f"{cluster_prefix}/synthesis.json", synthesis_artifact.to_dict())
 
 
 def run_pipeline(
@@ -150,24 +157,34 @@ def run_pipeline(
                 hits.extend(search_provider.search(candidate.text))
         except Exception as exc:
             logger.warning("Search failed for cluster %s: %s", cluster.cluster_id, exc)
-            failures.append(ClusterFailure(
-                cluster_id=cluster.cluster_id,
-                stage="search",
-                error=str(exc),
-                evidence_ids=list(cluster.evidence_refs),
-            ))
+            failures.append(
+                ClusterFailure(
+                    cluster_id=cluster.cluster_id,
+                    stage="search",
+                    error=str(exc),
+                    evidence_ids=list(cluster.evidence_refs),
+                )
+            )
 
         # Synthesis — partial failure records a placeholder datasheet
+        synthesis_artifact: SynthesisArtifact
         try:
-            datasheet = synthesize_item(cluster_observations_list, hits, synthesis_backend)
-        except Exception as exc:
+            datasheet, synthesis_artifact = synthesize_item_with_artifact(
+                cluster_observations_list,
+                hits,
+                synthesis_backend,
+            )
+        except SynthesisFailure as exc:
             logger.warning("Synthesis failed for cluster %s: %s", cluster.cluster_id, exc)
-            failures.append(ClusterFailure(
-                cluster_id=cluster.cluster_id,
-                stage="synthesis",
-                error=str(exc),
-                evidence_ids=list(cluster.evidence_refs),
-            ))
+            failures.append(
+                ClusterFailure(
+                    cluster_id=cluster.cluster_id,
+                    stage="synthesis",
+                    error=str(exc),
+                    evidence_ids=list(cluster.evidence_refs),
+                )
+            )
+            synthesis_artifact = exc.artifact
             # Build a minimal placeholder so the report still renders
             datasheet = ItemDatasheet(
                 probable_identity="Unidentified device",
@@ -178,17 +195,61 @@ def run_pipeline(
                 evidence_refs=[obs.evidence_id for obs in cluster_observations_list],
                 open_questions=[f"Synthesis failed: {exc}"],
             )
+        except Exception as exc:
+            logger.warning("Synthesis failed for cluster %s: %s", cluster.cluster_id, exc)
+            failures.append(
+                ClusterFailure(
+                    cluster_id=cluster.cluster_id,
+                    stage="synthesis",
+                    error=str(exc),
+                    evidence_ids=list(cluster.evidence_refs),
+                )
+            )
+            backend_name = getattr(synthesis_backend, "__class__", type(synthesis_backend)).__name__
+            synthesis_artifact = SynthesisArtifact(
+                backend_name=backend_name,
+                model_name=str(
+                    getattr(
+                        synthesis_backend,
+                        "model",
+                        backend_name,
+                    )
+                ),
+                schema_name="ItemDatasheet",
+                raw_payload="",
+                accepted=False,
+                attempt_count=1,
+                last_error=str(exc),
+            )
+            datasheet = ItemDatasheet(
+                probable_identity="Unidentified device",
+                object_class="unknown",
+                likely_function="unknown",
+                manufacturer="Unknown",
+                model_identifiers=[],
+                evidence_refs=[obs.evidence_id for obs in cluster_observations_list],
+                open_questions=[f"Synthesis failed: {exc}"],
+            )
 
-        _write_cluster_artifacts(store, cluster, query_plan, hits, datasheet)
+        _write_cluster_artifacts(
+            store,
+            cluster,
+            query_plan,
+            hits,
+            datasheet,
+            synthesis_artifact,
+        )
         report_sections.append(render_item_dossier(datasheet, hits, cluster_observations_list))
 
-        cluster_summaries.append(ClusterSummary(
-            cluster_id=cluster.cluster_id,
-            identity=datasheet.probable_identity,
-            evidence_count=len(cluster_observations_list),
-            search_hits=len(hits),
-            confidence=datasheet.confidence,
-        ))
+        cluster_summaries.append(
+            ClusterSummary(
+                cluster_id=cluster.cluster_id,
+                identity=datasheet.probable_identity,
+                evidence_count=len(cluster_observations_list),
+                search_hits=len(hits),
+                confidence=datasheet.confidence,
+            )
+        )
 
         for observation in cluster_observations_list:
             tag_set = build_tag_set(observation, datasheet, hits)

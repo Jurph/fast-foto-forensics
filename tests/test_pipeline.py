@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,6 +76,19 @@ def test_run_pipeline_creates_artifacts_report_and_sidecars() -> None:
     assert result.cluster_summaries[0].confidence == 0.88
     assert result.failures == []
 
+    cluster_dir = output_dir / "demo-run" / "artifacts" / "clusters" / "cluster-000"
+    datasheet_path = cluster_dir / "datasheet.json"
+    synthesis_path = cluster_dir / "synthesis.json"
+    assert datasheet_path.exists()
+    assert synthesis_path.exists()
+
+    synthesis_payload = json.loads(synthesis_path.read_text(encoding="utf-8"))
+    assert synthesis_payload["accepted"] is True
+    assert synthesis_payload["backend_name"] == "replay"
+    assert synthesis_payload["model_name"] == "fixture"
+    assert synthesis_payload["schema_name"] == "ItemDatasheet"
+    assert "Linksys WRT54G" in synthesis_payload["raw_payload"]
+
 
 def test_run_pipeline_records_synthesis_failure() -> None:
     """When synthesis fails, the pipeline should continue and record the failure."""
@@ -116,3 +130,14 @@ def test_run_pipeline_records_synthesis_failure() -> None:
     # Placeholder identity appears in summary and report
     assert result.cluster_summaries[0].identity == "Unidentified device"
     assert "Unidentified device" in result.report_path.read_text(encoding="utf-8")
+
+    cluster_dir = output_dir / "fail-demo" / "artifacts" / "clusters" / "cluster-000"
+    datasheet_path = cluster_dir / "datasheet.json"
+    synthesis_path = cluster_dir / "synthesis.json"
+    assert datasheet_path.exists()
+    assert synthesis_path.exists()
+
+    synthesis_payload = json.loads(synthesis_path.read_text(encoding="utf-8"))
+    assert synthesis_payload["accepted"] is False
+    assert synthesis_payload["last_error"] == "LLM backend unavailable"
+    assert synthesis_payload["attempt_count"] == 1

@@ -19,7 +19,12 @@ from fast_foto_forensics.search import (
     SearXNGSearchProvider,
     StaticSearchProvider,
 )
-from fast_foto_forensics.synthesis import HeuristicSynthesisBackend
+from fast_foto_forensics.synthesis import (
+    HeuristicSynthesisBackend,
+    OllamaDatasheetSynthesisBackend,
+    RemoteDatasheetSynthesisBackend,
+    SynthesisBackend,
+)
 from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBackend, VisionBackend
 
 
@@ -39,6 +44,34 @@ def _build_vision_backend(args: argparse.Namespace) -> VisionBackend:
     if args.vision_backend == "ollama":
         return OllamaVisionBackend(model=args.vision_model)
     return FilenameVisionBackend()
+
+
+def _add_synthesis_args(parser: argparse.ArgumentParser) -> None:
+    """Add synthesis backend flags to a subparser."""
+    parser.add_argument(
+        "--synthesis-backend",
+        choices=("ollama", "remote", "heuristic"),
+        default="ollama",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--synthesis-model",
+        default="qwen3:8b",
+        help=argparse.SUPPRESS,
+    )
+
+
+def _build_synthesis_backend(args: argparse.Namespace) -> SynthesisBackend:
+    """Instantiate the synthesis backend selected by CLI flags."""
+    if args.synthesis_backend == "remote":
+        if args.synthesis_model == "qwen3:8b":
+            return RemoteDatasheetSynthesisBackend()
+        return RemoteDatasheetSynthesisBackend(model=args.synthesis_model)
+    if args.synthesis_backend == "heuristic":
+        return HeuristicSynthesisBackend()
+    if args.synthesis_model == "qwen3:8b":
+        return OllamaDatasheetSynthesisBackend()
+    return OllamaDatasheetSynthesisBackend(model=args.synthesis_model)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,12 +100,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--run-label", default="run-001")
     run_parser.add_argument("--profile", default="default")
     _add_vision_args(run_parser)
+    _add_synthesis_args(run_parser)
     run_parser.add_argument(
         "--search-provider",
         choices=("static", "duckduckgo", "ddgs", "searxng"),
         default="ddgs",
     )
-    run_parser.add_argument("--searxng-url", default="http://localhost:8888", help="SearXNG instance URL")
+    run_parser.add_argument(
+        "--searxng-url", default="http://localhost:8888", help="SearXNG instance URL"
+    )
     run_parser.add_argument("--proxy")
     run_parser.add_argument("--offline", action="store_true")
 
@@ -118,13 +154,15 @@ def _run_scan(args: argparse.Namespace) -> int:
             logger.warning("Skipping %s: %s", obs.source_path, exc)
             continue
 
-        rows.append({
-            "filename": Path(obs.source_path).name,
-            "function": result.object_class or "",
-            "manufacturer": result.vendor or "",
-            "model_no": ", ".join(result.candidate_identifiers),
-            "serial": ", ".join(result.serial_numbers),
-        })
+        rows.append(
+            {
+                "filename": Path(obs.source_path).name,
+                "function": result.object_class or "",
+                "manufacturer": result.vendor or "",
+                "model_no": ", ".join(result.candidate_identifiers),
+                "serial": ", ".join(result.serial_numbers),
+            }
+        )
 
     if not rows:
         print("No supported images found.")
@@ -134,12 +172,14 @@ def _run_scan(args: argparse.Namespace) -> int:
 
     if output_format == "json":
         import json
+
         print(json.dumps(rows, indent=2))
         return 0
 
     if output_format == "csv":
         import csv
         import io
+
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
         writer.writeheader()
@@ -153,7 +193,10 @@ def _run_scan(args: argparse.Namespace) -> int:
         from rich.table import Table
     except ImportError:
         # Graceful fallback if rich is not installed
-        header = f"{'Filename':<40} {'Function':<18} {'Manufacturer':<16} {'Model No.':<16} {'Serial / ID'}"
+        header = (
+            f"{'Filename':<40} {'Function':<18} {'Manufacturer':<16} "
+            f"{'Model No.':<16} {'Serial / ID'}"
+        )
         print(header)
         print("-" * len(header))
         for row in rows:
@@ -186,7 +229,6 @@ def _run_scan(args: argparse.Namespace) -> int:
 
 def _print_run_summary(result) -> None:
     """Print a concise post-run summary to the console."""
-    from fast_foto_forensics.pipeline import RunResult
 
     # Header
     status = "PARTIAL" if result.failures else "OK"
@@ -233,6 +275,7 @@ def run_cli(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         vision_backend = _build_vision_backend(args)
+        synthesis_backend = _build_synthesis_backend(args)
 
         search_provider: SearchProvider
         if args.offline or args.search_provider == "static":
@@ -251,7 +294,7 @@ def run_cli(argv: list[str] | None = None) -> int:
             run_label=args.run_label,
             vision_backend=vision_backend,
             search_provider=search_provider,
-            synthesis_backend=HeuristicSynthesisBackend(),
+            synthesis_backend=synthesis_backend,
         )
         _print_run_summary(result)
         return 0

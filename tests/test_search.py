@@ -10,8 +10,8 @@ import pytest
 from fast_foto_forensics.search import (
     DDGSSearchProvider,
     DuckDuckGoSearchProvider,
-    SearXNGSearchProvider,
     SearchProviderError,
+    SearXNGSearchProvider,
     StaticSearchProvider,
 )
 
@@ -142,8 +142,6 @@ def test_searxng_provider_normalizes_json_results() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = SearXNGSearchProvider(instance_url="http://fake-searxng:8888")
-    # Inject our mock client
-    provider_search = provider.search
 
     import unittest.mock as mock
 
@@ -178,10 +176,6 @@ def test_ddgs_provider_normalizes_results() -> None:
     mock_ddgs_instance.__enter__ = mock.Mock(return_value=mock_ddgs_instance)
     mock_ddgs_instance.__exit__ = mock.Mock(return_value=False)
     mock_ddgs_instance.text.return_value = fake_results
-
-    with mock.patch("fast_foto_forensics.search.DDGSSearchProvider.search") as mock_search:
-        # Test the real normalization logic by calling through
-        pass
 
     # Test directly by mocking the ddgs import
     provider = DDGSSearchProvider(max_results=5)

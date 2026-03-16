@@ -24,16 +24,15 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from fast_foto_forensics.models import EvidenceObservation, VisionResult
 from fast_foto_forensics.pipeline import run_pipeline
-from fast_foto_forensics.search import DDGSSearchProvider, StaticSearchProvider
+from fast_foto_forensics.search import DDGSSearchProvider
 from fast_foto_forensics.synthesis import HeuristicSynthesisBackend
-from fast_foto_forensics.vision import OllamaVisionBackend, FilenameVisionBackend
+from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBackend
 
 _HAS_OLLAMA = importlib.util.find_spec("ollama") is not None
 _HAS_DDGS = importlib.util.find_spec("ddgs") is not None
@@ -206,9 +205,7 @@ class TestFullPipeline:
         # Sidecar JSON: should have tags and a caption
         sidecar = json.loads(result.sidecar_paths[0].read_text(encoding="utf-8"))
         assert isinstance(sidecar["tags"], list)
-        assert len(sidecar["tags"]) >= 2, (
-            f"Sidecar should have 2+ tags, got: {sidecar['tags']}"
-        )
+        assert len(sidecar["tags"]) >= 2, f"Sidecar should have 2+ tags, got: {sidecar['tags']}"
         assert len(sidecar["caption"]) > 10
 
         # Persisted artifacts: vision result should be cached
