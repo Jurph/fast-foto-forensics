@@ -184,6 +184,40 @@ def _run_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_run_summary(result) -> None:
+    """Print a concise post-run summary to the console."""
+    from fast_foto_forensics.pipeline import RunResult
+
+    # Header
+    status = "PARTIAL" if result.failures else "OK"
+    print(f"\n=== Run {status} ===")
+    print(f"  Images processed : {result.observation_count}")
+    print(f"  Clusters found   : {result.cluster_count}")
+    print(f"  Sidecars written : {len(result.sidecar_paths)}")
+
+    # Per-cluster results
+    if result.cluster_summaries:
+        print()
+        print("  Identified items:")
+        for cs in result.cluster_summaries:
+            conf = f"{cs.confidence:.0%}" if cs.confidence else "n/a"
+            hits_label = f"{cs.search_hits} hits" if cs.search_hits else "no hits"
+            print(f"    - {cs.identity}  ({cs.evidence_count} images, {hits_label}, conf {conf})")
+
+    # Failures
+    if result.failures:
+        print()
+        print("  Failures:")
+        for f in result.failures:
+            print(f"    ! [{f.stage}] cluster {f.cluster_id}: {f.error}")
+
+    # Artifact pointers
+    print()
+    print(f"  Report  : {result.report_path}")
+    print(f"  Run dir : {result.run_dir}")
+    print()
+
+
 def run_cli(argv: list[str] | None = None) -> int:
     """Execute the CLI for the provided argument vector."""
     parser = build_parser()
@@ -219,9 +253,7 @@ def run_cli(argv: list[str] | None = None) -> int:
             search_provider=search_provider,
             synthesis_backend=HeuristicSynthesisBackend(),
         )
-        print(f"Run complete: {result.run_dir}")
-        print(f"Report: {result.report_path}")
-        print(f"Sidecars: {len(result.sidecar_paths)} written")
+        _print_run_summary(result)
         return 0
 
     if args.command == "worker":

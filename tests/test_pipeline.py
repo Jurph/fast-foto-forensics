@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
+from fast_foto_forensics.models import EvidenceObservation, SearchHit
 from fast_foto_forensics.pipeline import run_pipeline
 from fast_foto_forensics.search import StaticSearchProvider
 from fast_foto_forensics.synthesis import ReplaySynthesisBackend
@@ -64,3 +66,53 @@ def test_run_pipeline_creates_artifacts_report_and_sidecars() -> None:
     assert result.sidecar_paths
     assert "Linksys WRT54G" in result.report_path.read_text(encoding="utf-8")
     assert result.sidecar_paths[0].name.endswith(".fff-tags.json")
+
+    # New summary fields
+    assert result.observation_count == 1
+    assert result.cluster_count == 1
+    assert len(result.cluster_summaries) == 1
+    assert result.cluster_summaries[0].identity == "Linksys WRT54G"
+    assert result.cluster_summaries[0].confidence == 0.88
+    assert result.failures == []
+
+
+def test_run_pipeline_records_synthesis_failure() -> None:
+    """When synthesis fails, the pipeline should continue and record the failure."""
+    input_dir = Path(".tmp") / "pipeline-fail-case"
+    output_dir = Path(".tmp") / "pipeline-fail-output"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "001-wrt54g-router.jpg").write_bytes(b"router-image")
+
+    @dataclass(slots=True)
+    class FailingSynthesisBackend:
+        def generate(
+            self,
+            observations: list[EvidenceObservation],
+            hits: list[SearchHit],
+            previous_error: str | None = None,
+        ) -> str:
+            raise RuntimeError("LLM backend unavailable")
+
+    result = run_pipeline(
+        input_path=input_dir,
+        output_root=output_dir,
+        run_label="fail-demo",
+        vision_backend=FilenameVisionBackend(),
+        search_provider=StaticSearchProvider(fixtures={}),
+        synthesis_backend=FailingSynthesisBackend(),
+    )
+
+    # Run still completes
+    assert result.report_path.exists()
+    assert result.observation_count == 1
+    assert result.cluster_count == 1
+
+    # Failure is recorded
+    assert len(result.failures) == 1
+    assert result.failures[0].stage == "synthesis"
+    assert "LLM backend unavailable" in result.failures[0].error
+
+    # Placeholder identity appears in summary and report
+    assert result.cluster_summaries[0].identity == "Unidentified device"
+    assert "Unidentified device" in result.report_path.read_text(encoding="utf-8")

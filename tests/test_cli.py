@@ -9,8 +9,8 @@ from fast_foto_forensics.main import main
 from fast_foto_forensics.vision import OllamaVisionBackend
 
 
-def test_cli_run_command_creates_run_directory() -> None:
-    """The run subcommand should execute the pipeline and report the output path."""
+def test_cli_run_command_creates_run_directory(capsys) -> None:
+    """The run subcommand should execute the pipeline and print a summary."""
     input_dir = Path(".tmp") / "cli-case"
     output_dir = Path(".tmp") / "cli-output"
     input_dir.mkdir(parents=True, exist_ok=True)
@@ -23,6 +23,12 @@ def test_cli_run_command_creates_run_directory() -> None:
 
     assert exit_code == 0
     assert (output_dir / "cli-demo" / "reports" / "report.md").exists()
+
+    captured = capsys.readouterr().out
+    assert "Run OK" in captured
+    assert "Images processed" in captured
+    assert "Identified items" in captured
+    assert "Report" in captured
 
 
 def test_cli_render_and_tag_commands_rebuild_artifacts() -> None:
@@ -115,6 +121,45 @@ def test_cli_run_with_ollama_backend_flag() -> None:
 
     assert exit_code == 0
     assert (output_dir / "ollama-demo" / "reports" / "report.md").exists()
+
+
+def test_cli_run_partial_failure_shows_warning(capsys) -> None:
+    """When synthesis fails, the summary should show PARTIAL and list the failure."""
+    from dataclasses import dataclass
+
+    from fast_foto_forensics.models import EvidenceObservation, SearchHit
+    from fast_foto_forensics.synthesis import SynthesisBackend
+
+    @dataclass(slots=True)
+    class FailingSynthesisBackend:
+        def generate(
+            self,
+            observations: list[EvidenceObservation],
+            hits: list[SearchHit],
+            previous_error: str | None = None,
+        ) -> str:
+            raise RuntimeError("model crashed")
+
+    input_dir = Path(".tmp") / "cli-partial-case"
+    output_dir = Path(".tmp") / "cli-partial-output"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "001-wrt54g-router.jpg").write_bytes(b"router")
+
+    # Patch HeuristicSynthesisBackend to use our failing one
+    with patch(
+        "fast_foto_forensics.cli.HeuristicSynthesisBackend",
+        return_value=FailingSynthesisBackend(),
+    ):
+        exit_code = main(
+            ["run", str(input_dir), "--output", str(output_dir), "--run-label", "partial-demo"]
+        )
+
+    assert exit_code == 0
+    captured = capsys.readouterr().out
+    assert "PARTIAL" in captured
+    assert "Failures" in captured
+    assert "synthesis" in captured
 
 
 def test_cli_scan_prints_table(capsys) -> None:
