@@ -36,6 +36,7 @@ from fast_foto_forensics.synthesis import HeuristicSynthesisBackend
 from fast_foto_forensics.vision import OllamaVisionBackend, FilenameVisionBackend
 
 _HAS_OLLAMA = importlib.util.find_spec("ollama") is not None
+_HAS_DDGS = importlib.util.find_spec("ddgs") is not None
 
 # Path to pre-converted test JPEGs (created during earlier demo runs).
 # These are real photos of networking hardware, small enough to process
@@ -129,6 +130,7 @@ class TestOllamaRealPhoto:
 
 
 @pytest.mark.slow
+@pytest.mark.skipif(not _HAS_DDGS, reason="ddgs package not installed")
 class TestDDGSLiveSearch:
     """Verify that DDGS returns usable web results for hardware queries."""
 

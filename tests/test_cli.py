@@ -18,7 +18,8 @@ def test_cli_run_command_creates_run_directory(capsys) -> None:
     (input_dir / "001-wrt54g-router.jpg").write_bytes(b"router")
 
     exit_code = main(
-        ["run", str(input_dir), "--output", str(output_dir), "--run-label", "cli-demo"]
+        ["run", str(input_dir), "--output", str(output_dir), "--run-label", "cli-demo",
+         "--offline"]
     )
 
     assert exit_code == 0
