@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import logging
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from fast_foto_forensics.clustering import cluster_observations
@@ -22,6 +23,29 @@ from fast_foto_forensics.synthesis import SynthesisBackend, synthesize_item
 from fast_foto_forensics.tagging import build_tag_set, write_tag_sidecar
 from fast_foto_forensics.vision import VisionBackend, enrich_observations
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ClusterSummary:
+    """Per-cluster outcome recorded during a pipeline run."""
+
+    cluster_id: str
+    identity: str
+    evidence_count: int
+    search_hits: int
+    confidence: float
+
+
+@dataclass(slots=True)
+class ClusterFailure:
+    """A cluster that failed during processing."""
+
+    cluster_id: str
+    stage: str  # "search", "synthesis", "tagging"
+    error: str
+    evidence_ids: list[str]
+
 
 @dataclass(slots=True)
 class RunResult:
@@ -30,6 +54,10 @@ class RunResult:
     run_dir: Path
     report_path: Path
     sidecar_paths: list[Path]
+    observation_count: int = 0
+    cluster_count: int = 0
+    cluster_summaries: list[ClusterSummary] = field(default_factory=list)
+    failures: list[ClusterFailure] = field(default_factory=list)
 
 
 def _load_observations(store: RunStore) -> dict[str, EvidenceObservation]:
@@ -104,6 +132,8 @@ def run_pipeline(
     )
     sidecar_paths: list[Path] = []
     report_sections: list[str] = []
+    cluster_summaries: list[ClusterSummary] = []
+    failures: list[ClusterFailure] = []
 
     for cluster in clusters:
         cluster_observations_list = [
@@ -112,12 +142,53 @@ def run_pipeline(
             if observation.evidence_id in cluster.evidence_refs
         ]
         query_plan = build_query_plan(cluster_observations_list, max_queries=3)
-        hits = []
-        for candidate in query_plan.selected_queries:
-            hits.extend(search_provider.search(candidate.text))
-        datasheet = synthesize_item(cluster_observations_list, hits, synthesis_backend)
+
+        # Search — partial failure yields zero hits, not a crash
+        hits: list[SearchHit] = []
+        try:
+            for candidate in query_plan.selected_queries:
+                hits.extend(search_provider.search(candidate.text))
+        except Exception as exc:
+            logger.warning("Search failed for cluster %s: %s", cluster.cluster_id, exc)
+            failures.append(ClusterFailure(
+                cluster_id=cluster.cluster_id,
+                stage="search",
+                error=str(exc),
+                evidence_ids=list(cluster.evidence_refs),
+            ))
+
+        # Synthesis — partial failure records a placeholder datasheet
+        try:
+            datasheet = synthesize_item(cluster_observations_list, hits, synthesis_backend)
+        except Exception as exc:
+            logger.warning("Synthesis failed for cluster %s: %s", cluster.cluster_id, exc)
+            failures.append(ClusterFailure(
+                cluster_id=cluster.cluster_id,
+                stage="synthesis",
+                error=str(exc),
+                evidence_ids=list(cluster.evidence_refs),
+            ))
+            # Build a minimal placeholder so the report still renders
+            datasheet = ItemDatasheet(
+                probable_identity="Unidentified device",
+                object_class="unknown",
+                likely_function="unknown",
+                manufacturer="Unknown",
+                model_identifiers=[],
+                evidence_refs=[obs.evidence_id for obs in cluster_observations_list],
+                open_questions=[f"Synthesis failed: {exc}"],
+            )
+
         _write_cluster_artifacts(store, cluster, query_plan, hits, datasheet)
         report_sections.append(render_item_dossier(datasheet, hits, cluster_observations_list))
+
+        cluster_summaries.append(ClusterSummary(
+            cluster_id=cluster.cluster_id,
+            identity=datasheet.probable_identity,
+            evidence_count=len(cluster_observations_list),
+            search_hits=len(hits),
+            confidence=datasheet.confidence,
+        ))
 
         for observation in cluster_observations_list:
             tag_set = build_tag_set(observation, datasheet, hits)
@@ -125,7 +196,15 @@ def run_pipeline(
 
     report_path = store.reports_dir / "report.md"
     report_path.write_text("\n\n".join(report_sections), encoding="utf-8")
-    return RunResult(run_dir=store.run_dir, report_path=report_path, sidecar_paths=sidecar_paths)
+    return RunResult(
+        run_dir=store.run_dir,
+        report_path=report_path,
+        sidecar_paths=sidecar_paths,
+        observation_count=len(observations),
+        cluster_count=len(clusters),
+        cluster_summaries=cluster_summaries,
+        failures=failures,
+    )
 
 
 def rerender_run(run_dir: Path) -> Path:
