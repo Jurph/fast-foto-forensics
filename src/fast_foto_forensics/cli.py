@@ -15,6 +15,7 @@ from fast_foto_forensics.pipeline import (
 from fast_foto_forensics.search import (
     DuckDuckGoSearchProvider,
     SearchProvider,
+    SearXNGSearchProvider,
     StaticSearchProvider,
 )
 from fast_foto_forensics.synthesis import HeuristicSynthesisBackend
@@ -38,7 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Vision backend: filename (heuristic) or ollama (real model)",
     )
     run_parser.add_argument("--vision-model", default="qwen2.5vl:7b", help="Ollama model name")
-    run_parser.add_argument("--search-provider", choices=("static", "duckduckgo"), default="static")
+    run_parser.add_argument(
+        "--search-provider",
+        choices=("static", "duckduckgo", "searxng"),
+        default="static",
+    )
+    run_parser.add_argument("--searxng-url", default="http://localhost:8888", help="SearXNG instance URL")
     run_parser.add_argument("--proxy")
     run_parser.add_argument("--offline", action="store_true")
 
@@ -77,6 +83,10 @@ def run_cli(argv: list[str] | None = None) -> int:
         search_provider: SearchProvider
         if args.offline or args.search_provider == "static":
             search_provider = StaticSearchProvider(fixtures={})
+        elif args.search_provider == "searxng":
+            search_provider = SearXNGSearchProvider(
+                instance_url=args.searxng_url, proxy_url=args.proxy
+            )
         else:
             search_provider = DuckDuckGoSearchProvider(proxy_url=args.proxy)
         result = run_pipeline(

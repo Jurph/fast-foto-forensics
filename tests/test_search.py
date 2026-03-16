@@ -9,6 +9,7 @@ import pytest
 
 from fast_foto_forensics.search import (
     DuckDuckGoSearchProvider,
+    SearXNGSearchProvider,
     SearchProviderError,
     StaticSearchProvider,
 )
@@ -116,3 +117,56 @@ def test_duckduckgo_provider_raises_clear_error_on_invalid_json() -> None:
 
     with pytest.raises(SearchProviderError, match="duckduckgo"):
         provider.search("WRT54G release date")
+
+
+def test_searxng_provider_normalizes_json_results() -> None:
+    """SearXNG JSON responses should normalize into SearchHit objects."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        payload = {
+            "results": [
+                {
+                    "title": "TP-Link OC200 Datasheet",
+                    "content": "The OC200 is a cloud controller for Omada access points.",
+                    "url": "https://example.com/oc200",
+                },
+                {
+                    "title": "TP-Link OC200 Review",
+                    "content": "A compact hardware controller.",
+                    "url": "https://example.com/oc200-review",
+                },
+            ]
+        }
+        return httpx.Response(200, text=json.dumps(payload))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = SearXNGSearchProvider(instance_url="http://fake-searxng:8888")
+    # Inject our mock client
+    provider_search = provider.search
+
+    import unittest.mock as mock
+
+    with mock.patch("fast_foto_forensics.search.httpx.Client", return_value=client):
+        hits = provider.search("TP-Link OC200 datasheet")
+
+    assert len(hits) == 2
+    assert hits[0].provider == "searxng"
+    assert hits[0].title == "TP-Link OC200 Datasheet"
+    assert hits[0].url == "https://example.com/oc200"
+    assert hits[1].snippet == "A compact hardware controller."
+
+
+def test_searxng_provider_raises_on_connection_error() -> None:
+    """SearXNG should raise SearchProviderError when the instance is unreachable."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    import unittest.mock as mock
+
+    provider = SearXNGSearchProvider(instance_url="http://fake-searxng:8888")
+    with mock.patch("fast_foto_forensics.search.httpx.Client", return_value=client):
+        with pytest.raises(SearchProviderError, match="SearXNG"):
+            provider.search("test query")

@@ -143,3 +143,56 @@ class DuckDuckGoSearchProvider:
             if hit is not None:
                 hits.append(hit)
         return hits
+
+
+@dataclass(slots=True)
+class SearXNGSearchProvider:
+    """Search via a SearXNG instance (local or remote).
+
+    SearXNG is a self-hosted metasearch engine with a JSON API.
+    Run locally: docker run -p 8888:8888 searxng/searxng
+    No API key required.
+    """
+
+    instance_url: str = "http://localhost:8888"
+    proxy_url: str | None = None
+    max_results: int = 5
+
+    def search(self, query: str) -> list[SearchHit]:
+        client = httpx.Client(proxy=self.proxy_url, timeout=15.0, follow_redirects=True)
+        try:
+            response = client.get(
+                f"{self.instance_url.rstrip('/')}/search",
+                params={
+                    "q": query,
+                    "format": "json",
+                    "categories": "general",
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise SearchProviderError(
+                f"SearXNG search failed for query {query!r}: {exc}"
+            ) from exc
+
+        hits: list[SearchHit] = []
+        for index, result in enumerate(payload.get("results", [])[: self.max_results]):
+            title = result.get("title", "").strip()
+            snippet = result.get("content", "").strip()
+            url = result.get("url", "").strip()
+            if not url:
+                continue
+            hits.append(
+                SearchHit(
+                    hit_id=f"searxng-{index:03d}",
+                    provider="searxng",
+                    query=query,
+                    title=title or query,
+                    snippet=snippet,
+                    url=url,
+                )
+            )
+        return hits
+
+
