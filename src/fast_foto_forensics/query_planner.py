@@ -243,6 +243,23 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                     1.0,
                 )
 
+        # --- Tier 5: raw OCR text (kitchen sink) ---
+        # If we're out of structured data, the OCR blob itself might match
+        # user manuals, FCC filings, or forum posts.  Even "boring" tokens
+        # like port names can land hits when combined — "USB Reset LAN WAN
+        # Coax" is a distinctive enough fingerprint.  Truncate to keep it
+        # within a reasonable query length.
+        if obs.ocr_text.strip():
+            # Take the first ~120 chars — enough for a search engine to
+            # work with, short enough to not be rejected as too long.
+            truncated = obs.ocr_text.strip().replace("\n", " ")[:120].strip()
+            _record_candidate(
+                candidates, score_buckets,
+                truncated,
+                ["ocr_blob", obs.evidence_id],
+                1.0,
+            )
+
         # --- Analyst hints (always included if present) ---
         if obs.analyst_hints:
             _record_candidate(

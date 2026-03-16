@@ -60,7 +60,8 @@ def test_serial_numbers_searched_as_tier_two() -> None:
 
 def test_substantive_labels_become_tier_three() -> None:
     """Multi-word labels like 'Omada Hardware Controller' should generate
-    a search query, while port-name labels like 'LAN' should not."""
+    a search query, while port-name labels like 'LAN' should not appear
+    in the label-tier query (they may still appear in the OCR blob)."""
     obs = EvidenceObservation(
         evidence_id="img-003",
         source_path="evidence/controller.jpg",
@@ -77,12 +78,17 @@ def test_substantive_labels_become_tier_three() -> None:
     )
 
     plan = build_query_plan([obs], max_queries=5)
-    all_text = " ".join(q.text for q in plan.selected_queries).lower()
 
-    # Substantive labels should appear
-    assert "omada" in all_text
-    # Port-name noise should not
-    assert "reset" not in all_text
+    # Find the label-tier query (provenance starts with "labels")
+    label_queries = [q for q in plan.selected_queries if "labels" in q.provenance]
+    assert len(label_queries) >= 1
+    label_text = label_queries[0].text.lower()
+
+    # Substantive labels should appear in the label query
+    assert "omada" in label_text
+    # Port-name noise should not appear in the label query
+    assert "reset" not in label_text
+    assert "lan" not in label_text
 
 
 def test_fallback_brand_extraction_when_vendor_is_blank() -> None:
