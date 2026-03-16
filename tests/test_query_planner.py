@@ -32,27 +32,30 @@ def test_identifier_query_uses_vendor_and_object_class() -> None:
     assert f"class:wireless router" in top.provenance
 
 
-def test_vendor_plus_class_query_is_tier_two() -> None:
-    """A vendor+class query (no identifier) should appear below identifier queries."""
+def test_serial_numbers_searched_as_tier_two() -> None:
+    """Serial numbers should be searched — the search engine disambiguates
+    whether they're really serials or misclassified model numbers."""
     obs = EvidenceObservation(
         evidence_id="img-002",
-        source_path="evidence/router.jpg",
+        source_path="evidence/router-back.jpg",
         media_kind="image",
         sha256="def456",
         order_index=1,
-        caption="A Linksys wireless router.",
-        ocr_text="LINKSYS",
-        detected_labels=["router"],
-        candidate_identifiers=["WRT54G"],
-        vendor="Linksys",
+        caption="Back panel of a Verizon router.",
+        ocr_text="Serial no. G1A117060503877",
+        detected_labels=["USB", "Reset", "LAN"],
+        candidate_identifiers=[],
+        serial_numbers=["G1A117060503877"],
+        vendor="Verizon",
         object_class="wireless router",
     )
 
     plan = build_query_plan([obs], max_queries=5)
 
-    texts = [q.text for q in plan.selected_queries]
-    # Identifier query should rank above vendor+class
-    assert texts.index("Linksys WRT54G wireless router") < texts.index("Linksys wireless router")
+    # Serial should appear as a query — paired with vendor
+    assert len(plan.selected_queries) >= 1
+    assert "G1A117060503877" in plan.selected_queries[0].text
+    assert "Verizon" in plan.selected_queries[0].text
 
 
 def test_substantive_labels_become_tier_three() -> None:
@@ -107,8 +110,9 @@ def test_fallback_brand_extraction_when_vendor_is_blank() -> None:
     assert "nvidia" in all_text or "gtx" in all_text
 
 
-def test_serial_numbers_excluded_from_queries() -> None:
-    """Serial numbers are unique to one unit and should never appear in search queries."""
+def test_vendor_plus_class_alone_not_emitted() -> None:
+    """Vendor + object_class alone (e.g. 'Verizon wireless router') is too
+    vague to be useful — the planner should not emit it as a query."""
     obs = EvidenceObservation(
         evidence_id="img-005",
         source_path="evidence/router-back.jpg",
@@ -116,18 +120,21 @@ def test_serial_numbers_excluded_from_queries() -> None:
         sha256="mno345",
         order_index=4,
         caption="Back panel of a Verizon router.",
-        ocr_text="Serial no. G1A117060503877\nVerizon Fios",
+        ocr_text="Verizon Fios",
         detected_labels=["USB", "Reset", "LAN"],
         candidate_identifiers=[],
-        serial_numbers=["G1A117060503877"],
+        serial_numbers=[],
         vendor="Verizon",
         object_class="wireless router",
     )
 
     plan = build_query_plan([obs], max_queries=5)
-    all_text = " ".join(q.text for q in plan.selected_queries)
 
-    assert "G1A117060503877" not in all_text
+    # With no identifiers, no serials, and only noise labels, there's
+    # nothing worth searching for.  The planner should not emit
+    # "Verizon wireless router" as a query.
+    for q in plan.selected_queries:
+        assert q.text != "Verizon wireless router"
 
 
 def test_noise_words_excluded_from_queries() -> None:

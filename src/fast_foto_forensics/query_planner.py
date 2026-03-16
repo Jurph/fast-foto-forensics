@@ -14,20 +14,21 @@ Query tiers (highest value first)
    vendor and object_class when available.
    Example: ``"TP-Link OC200 wireless router"``
 
-2. **Vendor + class query** — vendor and object_class without a specific
-   model number.  Catches cases where identifiers are misread but the
-   brand/category are solid.
-   Example: ``"TP-Link wireless router"``
+2. **Serial number queries** — one per serial_number, combined with
+   vendor.  We don't try to guess whether a serial is "really" a model
+   number — if searching for it returns product pages, great.  If it
+   returns nothing, no harm done.
+   Example: ``"Verizon G1A117060503877"``
 
 3. **Label queries** — substantive detected_labels (filtering out port
    names and single-character noise) combined with vendor.
-   Example: ``"TP-Link Omada hardware controller"``
+   Example: ``"TP-Link Omada Hardware Controller"``
 
 4. **Fallback** — only when vendor is blank.  Attempts to extract a brand
-   from OCR/caption tokens using the old heuristic approach.
+   from OCR/caption tokens using heuristics.
 
-Serial numbers are deliberately excluded — they're unique to one physical
-unit and won't return useful product-info results from a web search.
+Vendor + object_class alone (e.g., "Verizon wireless router") is
+deliberately excluded — it's too vague to return useful results.
 """
 
 from __future__ import annotations
@@ -160,7 +161,14 @@ def _fallback_brand_tokens(observation: EvidenceObservation) -> list[str]:
 
 
 def build_query_plan(observations: list[EvidenceObservation], max_queries: int = 5) -> QueryPlan:
-    """Rank a small set of high-value queries from extracted evidence."""
+    """Rank a small set of high-value queries from extracted evidence.
+
+    Every alphanumeric string the vision model found gets searched.  We
+    don't try to classify identifiers as "model" vs. "serial" — that's
+    the search engine's job.  If a query returns product pages, it was a
+    model number.  If it returns nothing, it was a serial.  Either way,
+    the cost of one extra query is low.
+    """
     candidates: dict[str, QueryCandidate] = {}
     score_buckets: dict[str, float] = defaultdict(float)
 
@@ -168,7 +176,9 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
         vendor = obs.vendor
         obj_class = obs.object_class
 
-        # --- Tier 1: identifier queries (highest value) ---
+        # --- Tier 1: candidate_identifiers (highest value) ---
+        # These are the alphanumeric strings the vision model flagged as
+        # model numbers or part numbers.  Paired with vendor + object_class.
         for identifier in obs.candidate_identifiers:
             parts = []
             provenance = ["identifier", obs.evidence_id]
@@ -185,19 +195,26 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                 " ".join(parts), provenance, 10.0,
             )
 
-        # --- Tier 2: vendor + object_class (no specific identifier) ---
-        if vendor and obj_class:
+        # --- Tier 2: serial_numbers (still worth searching) ---
+        # We don't know if these are "really" serials or model numbers.
+        # The vision model's classification is a guess.  Searching for
+        # them costs one query each, and the results disambiguate for us.
+        for serial in obs.serial_numbers:
+            parts = []
+            provenance = ["serial", obs.evidence_id]
+            if vendor:
+                parts.append(vendor)
+                provenance.append(f"vendor:{vendor}")
+            parts.append(serial)
+
             _record_candidate(
                 candidates, score_buckets,
-                f"{vendor} {obj_class}",
-                ["vendor+class", obs.evidence_id],
-                5.0,
+                " ".join(parts), provenance, 5.0,
             )
 
         # --- Tier 3: substantive labels combined with vendor ---
         good_labels = _substantive_labels(obs)
         if good_labels:
-            # Build one query from the best labels
             parts = []
             if vendor:
                 parts.append(vendor)
