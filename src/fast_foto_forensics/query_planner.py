@@ -23,8 +23,22 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 
 from fast_foto_forensics.models import EvidenceObservation, QueryCandidate, QueryPlan
+
+_MAC_ADDRESS_PATTERN = re.compile(
+    r"^(?:[0-9A-Fa-f]{2}([:\-.]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}$"
+)
+_TRIM_TOKEN_PATTERN = re.compile(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$")
+
+
+@dataclass(frozen=True, slots=True)
+class IdentifierSignal:
+    """One identifier-like token plus its planner classification."""
+
+    token: str
+    kind: str
 
 
 def is_alphanumeric(token: str) -> bool:
@@ -69,6 +83,61 @@ def _extract_tokens(text: str) -> list[str]:
     return [t for t in re.split(r"[\s,;]+", text) if t.strip()]
 
 
+def _clean_token(token: str) -> str:
+    """Trim obvious punctuation while preserving model separators like dots and hyphens."""
+    return _TRIM_TOKEN_PATTERN.sub("", token.strip())
+
+
+def _classify_shape_based_identifier(token: str) -> str:
+    """Classify an alphanumeric token when only its shape is known."""
+    compact = re.sub(r"[^A-Za-z0-9]", "", token)
+    if _MAC_ADDRESS_PATTERN.match(token):
+        return "instance_like"
+    if len(compact) >= 12 and is_alphanumeric(token):
+        return "instance_like"
+    if 4 <= len(compact) <= 10 and is_alphanumeric(token):
+        return "ambiguous"
+    return "ambiguous"
+
+
+def _gather_identifier_signals(obs: EvidenceObservation) -> list[IdentifierSignal]:
+    """Collect identifier-like tokens with source-aware classifications."""
+    signals: list[IdentifierSignal] = []
+    seen: set[str] = set()
+
+    def add(token: str, kind: str) -> None:
+        cleaned = _clean_token(token)
+        if not cleaned or not is_alphanumeric(cleaned):
+            return
+        key = cleaned.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        signals.append(IdentifierSignal(token=cleaned, kind=kind))
+
+    for token in obs.candidate_identifiers:
+        add(token, "model_like")
+    for token in obs.serial_numbers:
+        add(token, "instance_like")
+
+    for token in obs.detected_labels:
+        cleaned = _clean_token(token)
+        if cleaned and is_alphanumeric(cleaned):
+            add(cleaned, _classify_shape_based_identifier(cleaned))
+
+    for token in _extract_tokens(obs.ocr_text):
+        cleaned = _clean_token(token)
+        if cleaned and is_alphanumeric(cleaned):
+            add(cleaned, _classify_shape_based_identifier(cleaned))
+
+    for token in _extract_tokens(obs.caption):
+        cleaned = _clean_token(token)
+        if cleaned and is_alphanumeric(cleaned):
+            add(cleaned, _classify_shape_based_identifier(cleaned))
+
+    return signals
+
+
 def _gather_alphanumerics_and_words(
     obs: EvidenceObservation,
 ) -> tuple[list[str], list[str]]:
@@ -83,11 +152,12 @@ def _gather_alphanumerics_and_words(
 
     Returns (alphanumerics, words) — both deduplicated, order preserved.
     """
+    identifier_signals = _gather_identifier_signals(obs)
+    alphanumerics = [signal.token for signal in identifier_signals]
+    alphanum_seen = {token.casefold() for token in alphanumerics}
     all_tokens: list[str] = []
 
     # Start with the vision model's structured output
-    all_tokens.extend(obs.candidate_identifiers)
-    all_tokens.extend(obs.serial_numbers)
     all_tokens.extend(obs.detected_labels)
 
     # Add OCR and caption tokens
@@ -95,13 +165,11 @@ def _gather_alphanumerics_and_words(
     all_tokens.extend(_extract_tokens(obs.caption))
 
     # Separate into alphanumerics and words
-    alphanum_seen: set[str] = set()
     word_seen: set[str] = set()
-    alphanumerics: list[str] = []
     words: list[str] = []
 
     for token in all_tokens:
-        stripped = token.strip()
+        stripped = _clean_token(token)
         if not stripped or len(stripped) < 2:
             continue
         key = stripped.casefold()
@@ -128,6 +196,41 @@ def _gather_alphanumerics_and_words(
         word_seen.add(obs.object_class.casefold())
 
     return alphanumerics, words
+
+
+def _choose_query_mode(obs: EvidenceObservation, signals: list[IdentifierSignal]) -> str:
+    """Choose whether to search for identity, mixed evidence, or documents."""
+    has_context = bool(obs.vendor or obs.object_class)
+    if has_context and any(signal.kind == "model_like" for signal in signals):
+        return "document"
+    if has_context and any(signal.kind == "ambiguous" for signal in signals):
+        return "mixed"
+    return "identity"
+
+
+def _preferred_doc_anchors(obs: EvidenceObservation, signals: list[IdentifierSignal]) -> list[str]:
+    """Build doc-intent anchors from the best available identifier signals."""
+    anchors: list[str] = []
+    seen: set[str] = set()
+    preferred_signals = [signal for signal in signals if signal.kind in {"model_like", "ambiguous"}]
+
+    for signal in preferred_signals:
+        candidates: list[str] = []
+        if obs.vendor:
+            candidates.append(f"{obs.vendor} {signal.token}")
+        if obs.object_class:
+            candidates.append(f"{signal.token} {obs.object_class}")
+        if not candidates:
+            candidates.append(signal.token)
+
+        for anchor in candidates:
+            key = anchor.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            anchors.append(anchor)
+
+    return anchors
 
 
 def _record_candidate(
@@ -168,8 +271,10 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
     score_buckets: dict[str, float] = defaultdict(float)
 
     for obs in observations:
+        identifier_signals = _gather_identifier_signals(obs)
         alphanumerics, words = _gather_alphanumerics_and_words(obs)
         vendor_lower = obs.vendor.casefold() if obs.vendor else ""
+        query_mode = _choose_query_mode(obs, identifier_signals)
 
         # --- Cross-product: each word × each alphanumeric ---
         for word in words:
@@ -184,6 +289,31 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                     ["word_x_alphanum", obs.evidence_id],
                     score,
                 )
+
+        # --- Technical-document variants when the anchor signal is strong enough ---
+        doc_anchors = _preferred_doc_anchors(obs, identifier_signals)
+        if query_mode == "document":
+            for anchor in doc_anchors[:1]:
+                for suffix, score in (
+                    ("datasheet", 4.5),
+                    ("manual", 4.0),
+                    ("specifications", 3.5),
+                ):
+                    _record_candidate(
+                        candidates,
+                        score_buckets,
+                        f"{anchor} {suffix}",
+                        [f"{query_mode}_query", obs.evidence_id],
+                        score,
+                    )
+        elif query_mode == "mixed" and doc_anchors:
+            _record_candidate(
+                candidates,
+                score_buckets,
+                f"{doc_anchors[0]} datasheet",
+                [f"{query_mode}_query", obs.evidence_id],
+                2.5,
+            )
 
         # --- OCR blob fallback (kitchen sink) ---
         if obs.ocr_text.strip():
