@@ -223,3 +223,80 @@ def test_dedup_prevents_duplicate_queries() -> None:
     # "Linksys WRT54G" should appear only once despite multiple sources
     texts_lower = [q.text.casefold() for q in plan.selected_queries]
     assert texts_lower.count("linksys wrt54g") == 1
+
+
+def test_vendor_identifier_and_function_enable_document_mode_queries() -> None:
+    """Strong product anchors should add doc-intent queries."""
+    obs = EvidenceObservation(
+        evidence_id="img-011",
+        source_path="evidence/router.jpg",
+        media_kind="image",
+        sha256="doc111",
+        order_index=10,
+        caption="A Linksys wireless router.",
+        ocr_text="LINKSYS WRT54G",
+        detected_labels=["router"],
+        candidate_identifiers=["WRT54G"],
+        vendor="Linksys",
+        object_class="wireless router",
+    )
+
+    plan = build_query_plan([obs], max_queries=12)
+
+    texts = [query.text.casefold() for query in plan.selected_queries]
+    assert "linksys wrt54g" in texts
+    assert "linksys wrt54g datasheet" in texts
+    assert "linksys wrt54g manual" in texts
+
+
+def test_ambiguous_identifier_with_context_uses_mixed_mode() -> None:
+    """Weak-but-plausible identifiers should keep one foot in identity mode."""
+    obs = EvidenceObservation(
+        evidence_id="img-012",
+        source_path="evidence/device.jpg",
+        media_kind="image",
+        sha256="mix222",
+        order_index=11,
+        caption="A small Acme network controller.",
+        ocr_text="ACME AB12CD34",
+        detected_labels=["controller"],
+        candidate_identifiers=[],
+        vendor="Acme",
+        object_class="controller",
+    )
+
+    plan = build_query_plan([obs], max_queries=12)
+
+    texts = [query.text.casefold() for query in plan.selected_queries]
+    doc_queries = [
+        text
+        for text in texts
+        if any(term in text for term in ("datasheet", "manual", "specifications"))
+    ]
+    assert "acme ab12cd34" in texts
+    assert "acme ab12cd34 datasheet" in texts
+    assert len(doc_queries) == 1
+
+
+def test_serial_like_tokens_do_not_trigger_document_mode_queries() -> None:
+    """Serial-number lookups should stay in identity mode, not jump to datasheets."""
+    obs = EvidenceObservation(
+        evidence_id="img-013",
+        source_path="evidence/router-back.jpg",
+        media_kind="image",
+        sha256="ser333",
+        order_index=12,
+        caption="Back panel of a Verizon router.",
+        ocr_text="Serial no. G1A117060503877",
+        detected_labels=["router", "serial"],
+        candidate_identifiers=[],
+        serial_numbers=["G1A117060503877"],
+        vendor="Verizon",
+        object_class="wireless router",
+    )
+
+    plan = build_query_plan([obs], max_queries=12)
+
+    texts = [query.text.casefold() for query in plan.selected_queries]
+    assert "verizon g1a117060503877" in texts
+    assert all(term not in " ".join(texts) for term in ("datasheet", "manual", "specifications"))
