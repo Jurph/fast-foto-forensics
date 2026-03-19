@@ -66,6 +66,8 @@ def test_run_pipeline_creates_artifacts_report_and_sidecars() -> None:
     assert result.report_path.exists()
     assert result.sidecar_paths
     assert "Linksys WRT54G" in result.report_path.read_text(encoding="utf-8")
+    assert "Confidence: 88%" in result.report_path.read_text(encoding="utf-8")
+    assert "Synthesis attempts: 1" in result.report_path.read_text(encoding="utf-8")
     assert result.sidecar_paths[0].name.endswith(".fff-tags.json")
 
     # New summary fields

@@ -8,6 +8,7 @@ from fast_foto_forensics.models import (
     QueryCandidate,
     QueryPlan,
     SearchHit,
+    SynthesisArtifact,
 )
 from fast_foto_forensics.reporting import render_item_dossier
 
@@ -60,8 +61,23 @@ def test_render_dossier_includes_identity_queries_and_sources() -> None:
             )
         ]
     )
+    synthesis_artifact = SynthesisArtifact(
+        backend_name="ollama",
+        model_name="qwen3:8b",
+        schema_name="ItemDatasheet",
+        raw_payload='{"probable_identity":"Linksys WRT54G"}',
+        accepted=True,
+        attempt_count=2,
+        last_error=None,
+    )
 
-    markdown = render_item_dossier(datasheet, hits, observations, query_plan=query_plan)
+    markdown = render_item_dossier(
+        datasheet,
+        hits,
+        observations,
+        query_plan=query_plan,
+        synthesis_artifact=synthesis_artifact,
+    )
 
     assert "## Probable Identity" in markdown
     assert "Linksys WRT54G" in markdown
@@ -69,3 +85,6 @@ def test_render_dossier_includes_identity_queries_and_sources() -> None:
     assert "https://example.com/wrt54g" in markdown
     assert "## Query Rationale" in markdown
     assert "Built from vendor and model-like identifier extracted from img-1." in markdown
+    assert "## Processing Metadata" in markdown
+    assert "Confidence: 88%" in markdown
+    assert "Synthesis attempts: 2" in markdown

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from fast_foto_forensics.models import EvidenceObservation, ItemDatasheet, QueryPlan, SearchHit
+from fast_foto_forensics.models import (
+    EvidenceObservation,
+    ItemDatasheet,
+    QueryPlan,
+    SearchHit,
+    SynthesisArtifact,
+)
 
 
 def render_item_dossier(
@@ -10,6 +16,7 @@ def render_item_dossier(
     hits: list[SearchHit],
     observations: list[EvidenceObservation],
     query_plan: QueryPlan | None = None,
+    synthesis_artifact: SynthesisArtifact | None = None,
 ) -> str:
     """Render a single datasheet and its supporting evidence as Markdown."""
     lines = [
@@ -63,6 +70,18 @@ def render_item_dossier(
             lines.append(f"- Query: {candidate.text}")
             if candidate.explanation:
                 lines.append(f"  - Why searched: {candidate.explanation}")
+
+    if synthesis_artifact is not None:
+        lines.extend(
+            [
+                "",
+                "## Processing Metadata",
+                f"- Confidence: {datasheet.confidence:.0%}",
+                f"- Synthesis attempts: {synthesis_artifact.attempt_count}",
+            ]
+        )
+        if synthesis_artifact.last_error:
+            lines.append(f"- Last synthesis error: {synthesis_artifact.last_error}")
 
     lines.extend(
         [
