@@ -239,6 +239,7 @@ def _record_candidate(
     text: str,
     provenance: list[str],
     score: float,
+    explanation: str,
 ) -> None:
     """Accumulate scores and merge provenance for one normalized query."""
     key = text.casefold()
@@ -250,6 +251,7 @@ def _record_candidate(
             text=text,
             provenance=list(provenance),
             score=score_buckets[key],
+            explanation=explanation,
         )
         return
 
@@ -258,6 +260,29 @@ def _record_candidate(
         if item not in candidate.provenance:
             candidate.provenance.append(item)
     candidate.score = score_buckets[key]
+    if explanation and explanation not in candidate.explanation:
+        candidate.explanation = explanation
+
+
+def _build_query_explanation(query_text: str, provenance: list[str]) -> str:
+    """Render a concise human-readable explanation for one query."""
+    evidence_refs = [
+        item for item in provenance if item.startswith("img-") or item.startswith("obs-")
+    ]
+    evidence_label = ", ".join(evidence_refs) if evidence_refs else "this observation"
+    if "document_query" in provenance:
+        return f"Doc-seeking query built from vendor/model anchors in {evidence_label}."
+    if "mixed_query" in provenance:
+        return f"Mixed identity/doc query built from an ambiguous identifier in {evidence_label}."
+    if "analyst_hint" in provenance:
+        return f"Analyst hint carried into search from {evidence_label}."
+    if "ocr_blob" in provenance:
+        return f"OCR fallback query launched from text seen in {evidence_label}."
+    if "word_x_alphanum" in provenance:
+        return (
+            f"Context-word plus identifier query built from extracted evidence in {evidence_label}."
+        )
+    return f"Search launched for '{query_text}' based on extracted evidence in {evidence_label}."
 
 
 def build_query_plan(observations: list[EvidenceObservation], max_queries: int = 5) -> QueryPlan:
@@ -288,6 +313,7 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                     query_text,
                     ["word_x_alphanum", obs.evidence_id],
                     score,
+                    _build_query_explanation(query_text, ["word_x_alphanum", obs.evidence_id]),
                 )
 
         # --- Technical-document variants when the anchor signal is strong enough ---
@@ -305,6 +331,10 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                         f"{anchor} {suffix}",
                         [f"{query_mode}_query", obs.evidence_id],
                         score,
+                        _build_query_explanation(
+                            f"{anchor} {suffix}",
+                            [f"{query_mode}_query", obs.evidence_id],
+                        ),
                     )
         elif query_mode == "mixed" and doc_anchors:
             _record_candidate(
@@ -313,6 +343,10 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                 f"{doc_anchors[0]} datasheet",
                 [f"{query_mode}_query", obs.evidence_id],
                 2.5,
+                _build_query_explanation(
+                    f"{doc_anchors[0]} datasheet",
+                    [f"{query_mode}_query", obs.evidence_id],
+                ),
             )
 
         # --- OCR blob fallback (kitchen sink) ---
@@ -324,6 +358,7 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                 truncated,
                 ["ocr_blob", obs.evidence_id],
                 1.0,
+                _build_query_explanation(truncated, ["ocr_blob", obs.evidence_id]),
             )
 
         # --- Analyst hints (always included if present) ---
@@ -334,6 +369,10 @@ def build_query_plan(observations: list[EvidenceObservation], max_queries: int =
                 " ".join(obs.analyst_hints[:3]),
                 ["analyst_hint", obs.evidence_id],
                 1.0,
+                _build_query_explanation(
+                    " ".join(obs.analyst_hints[:3]),
+                    ["analyst_hint", obs.evidence_id],
+                ),
             )
 
     ranked = sorted(candidates.values(), key=lambda c: (-c.score, c.text))

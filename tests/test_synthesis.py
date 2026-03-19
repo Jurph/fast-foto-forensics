@@ -216,6 +216,8 @@ def test_ollama_backend_uses_schema_mode_and_preserves_raw_payload(
     assert artifact.backend_name == "ollama"
     assert artifact.model_name == "qwen3:8b"
     assert artifact.schema_name == "ItemDatasheet"
+    assert artifact.prompt_text
+    assert "Analyze the evidence observations and search hits" in artifact.prompt_text
     assert artifact.raw_payload
 
     request = fake_chat.captured_kwargs[0]
@@ -350,13 +352,15 @@ def test_backfill_citations_clamps_confidence() -> None:
 def test_synthesize_repairs_trailing_comma_payload() -> None:
     """A payload with trailing commas should be repaired and accepted."""
     # Valid datasheet but with trailing commas
-    raw = json.dumps({
-        **_VALID_DATASHEET,
-        "confidence": 0.88,
-        "evidence_refs": ["img-1"],
-        "search_hit_refs": ["hit-1"],
-        "open_questions": [],
-    })
+    raw = json.dumps(
+        {
+            **_VALID_DATASHEET,
+            "confidence": 0.88,
+            "evidence_refs": ["img-1"],
+            "search_hit_refs": ["hit-1"],
+            "open_questions": [],
+        }
+    )
     # Inject trailing commas
     broken = raw.replace("],", "],  ,").replace("},", "},  ,")
     # It shouldn't be valid JSON anymore
@@ -373,11 +377,13 @@ def test_synthesize_repairs_trailing_comma_payload() -> None:
 
 def test_synthesize_backfills_missing_citations() -> None:
     """When the model omits evidence_refs, they should be backfilled."""
-    raw = json.dumps({
-        **_VALID_DATASHEET,
-        "confidence": 0.75,
-        # No evidence_refs or search_hit_refs
-    })
+    raw = json.dumps(
+        {
+            **_VALID_DATASHEET,
+            "confidence": 0.75,
+            # No evidence_refs or search_hit_refs
+        }
+    )
 
     backend = ReplaySynthesisBackend(responses=[raw])
     datasheet, artifact = synthesize_item_with_artifact([_OBS], [_HIT], backend)
@@ -385,6 +391,7 @@ def test_synthesize_backfills_missing_citations() -> None:
     assert datasheet.evidence_refs == ["img-1"]
     assert datasheet.search_hit_refs == ["hit-1"]
     assert artifact.accepted is True
+    assert artifact.prompt_text
 
 
 def test_synthesize_gives_up_after_two_bad_payloads() -> None:

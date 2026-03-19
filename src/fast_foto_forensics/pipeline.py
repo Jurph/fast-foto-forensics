@@ -98,6 +98,11 @@ def _load_datasheet(store: RunStore, cluster_id: str) -> ItemDatasheet:
     return ItemDatasheet.from_dict(payload)
 
 
+def _load_synthesis_artifact(store: RunStore, cluster_id: str) -> SynthesisArtifact:
+    payload = store.read_json_artifact(f"clusters/{cluster_id}/synthesis.json")
+    return SynthesisArtifact.from_dict(payload)
+
+
 def _write_cluster_artifacts(
     store: RunStore,
     cluster: EvidenceCluster,
@@ -239,7 +244,15 @@ def run_pipeline(
             datasheet,
             synthesis_artifact,
         )
-        report_sections.append(render_item_dossier(datasheet, hits, cluster_observations_list))
+        report_sections.append(
+            render_item_dossier(
+                datasheet,
+                hits,
+                cluster_observations_list,
+                query_plan=query_plan,
+                synthesis_artifact=synthesis_artifact,
+            )
+        )
 
         cluster_summaries.append(
             ClusterSummary(
@@ -276,14 +289,23 @@ def rerender_run(run_dir: Path) -> Path:
 
     for cluster in _load_clusters(store):
         datasheet = _load_datasheet(store, cluster.cluster_id)
-        _ = _load_query_plan(store, cluster.cluster_id)
+        query_plan = _load_query_plan(store, cluster.cluster_id)
         hits = _load_hits(store, cluster.cluster_id)
+        synthesis_artifact = _load_synthesis_artifact(store, cluster.cluster_id)
         cluster_observations_list = [
             observations[evidence_id]
             for evidence_id in cluster.evidence_refs
             if evidence_id in observations
         ]
-        report_sections.append(render_item_dossier(datasheet, hits, cluster_observations_list))
+        report_sections.append(
+            render_item_dossier(
+                datasheet,
+                hits,
+                cluster_observations_list,
+                query_plan=query_plan,
+                synthesis_artifact=synthesis_artifact,
+            )
+        )
 
     report_path = store.reports_dir / "report.md"
     report_path.write_text("\n\n".join(report_sections), encoding="utf-8")
