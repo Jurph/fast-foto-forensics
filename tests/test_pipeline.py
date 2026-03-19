@@ -77,10 +77,15 @@ def test_run_pipeline_creates_artifacts_report_and_sidecars() -> None:
     assert result.failures == []
 
     cluster_dir = output_dir / "demo-run" / "artifacts" / "clusters" / "cluster-000"
+    query_plan_path = cluster_dir / "query-plan.json"
     datasheet_path = cluster_dir / "datasheet.json"
     synthesis_path = cluster_dir / "synthesis.json"
+    assert query_plan_path.exists()
     assert datasheet_path.exists()
     assert synthesis_path.exists()
+
+    query_plan_payload = json.loads(query_plan_path.read_text(encoding="utf-8"))
+    assert query_plan_payload["selected_queries"][0]["explanation"]
 
     synthesis_payload = json.loads(synthesis_path.read_text(encoding="utf-8"))
     assert synthesis_payload["accepted"] is True

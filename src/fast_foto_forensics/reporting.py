@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from fast_foto_forensics.models import EvidenceObservation, ItemDatasheet, SearchHit
+from fast_foto_forensics.models import EvidenceObservation, ItemDatasheet, QueryPlan, SearchHit
 
 
 def render_item_dossier(
     datasheet: ItemDatasheet,
     hits: list[SearchHit],
     observations: list[EvidenceObservation],
+    query_plan: QueryPlan | None = None,
 ) -> str:
     """Render a single datasheet and its supporting evidence as Markdown."""
     lines = [
@@ -50,6 +51,18 @@ def render_item_dossier(
         lines.append(f"  - Title: {hit.title}")
         lines.append(f"  - Snippet: {hit.snippet}")
         lines.append(f"  - URL: {hit.url}")
+
+    if query_plan is not None and query_plan.selected_queries:
+        lines.extend(
+            [
+                "",
+                "## Query Rationale",
+            ]
+        )
+        for candidate in query_plan.selected_queries:
+            lines.append(f"- Query: {candidate.text}")
+            if candidate.explanation:
+                lines.append(f"  - Why searched: {candidate.explanation}")
 
     lines.extend(
         [

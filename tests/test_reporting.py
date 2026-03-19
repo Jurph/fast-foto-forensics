@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from fast_foto_forensics.models import EvidenceObservation, ItemDatasheet, SearchHit
+from fast_foto_forensics.models import (
+    EvidenceObservation,
+    ItemDatasheet,
+    QueryCandidate,
+    QueryPlan,
+    SearchHit,
+)
 from fast_foto_forensics.reporting import render_item_dossier
 
 
@@ -44,10 +50,22 @@ def test_render_dossier_includes_identity_queries_and_sources() -> None:
             url="https://example.com/wrt54g",
         )
     ]
+    query_plan = QueryPlan(
+        selected_queries=[
+            QueryCandidate(
+                text="Linksys WRT54G datasheet",
+                provenance=["document_query", "img-1"],
+                score=4.5,
+                explanation="Built from vendor and model-like identifier extracted from img-1.",
+            )
+        ]
+    )
 
-    markdown = render_item_dossier(datasheet, hits, observations)
+    markdown = render_item_dossier(datasheet, hits, observations, query_plan=query_plan)
 
     assert "## Probable Identity" in markdown
     assert "Linksys WRT54G" in markdown
     assert "WRT54G release date" in markdown
     assert "https://example.com/wrt54g" in markdown
+    assert "## Query Rationale" in markdown
+    assert "Built from vendor and model-like identifier extracted from img-1." in markdown

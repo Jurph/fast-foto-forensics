@@ -54,6 +54,8 @@ def test_vendor_anchored_query_scores_highest() -> None:
     assert "linksys" in top.text.lower()
     assert "wrt54g" in top.text.lower()
     assert top.score == 5.0
+    assert top.explanation
+    assert "img-001" in top.explanation
 
 
 def test_serial_numbers_paired_with_vendor() -> None:
@@ -176,6 +178,7 @@ def test_analyst_hints_included() -> None:
 
     hint_queries = [q for q in plan.selected_queries if "analyst_hint" in q.provenance]
     assert len(hint_queries) == 1
+    assert "analyst hint" in hint_queries[0].explanation.lower()
 
 
 def test_cross_product_generates_multiple_queries() -> None:

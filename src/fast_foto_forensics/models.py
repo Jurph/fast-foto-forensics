@@ -187,6 +187,7 @@ class QueryCandidate:
     text: str
     provenance: list[str]
     score: float
+    explanation: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> QueryCandidate:
@@ -195,6 +196,7 @@ class QueryCandidate:
             text=_require_str(data, "text"),
             provenance=_require_list(data, "provenance"),
             score=float(data.get("score", 0.0)),
+            explanation=_optional_str(data, "explanation") or "",
         )
 
 

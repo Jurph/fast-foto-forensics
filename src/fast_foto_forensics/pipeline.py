@@ -239,7 +239,14 @@ def run_pipeline(
             datasheet,
             synthesis_artifact,
         )
-        report_sections.append(render_item_dossier(datasheet, hits, cluster_observations_list))
+        report_sections.append(
+            render_item_dossier(
+                datasheet,
+                hits,
+                cluster_observations_list,
+                query_plan=query_plan,
+            )
+        )
 
         cluster_summaries.append(
             ClusterSummary(
@@ -283,7 +290,14 @@ def rerender_run(run_dir: Path) -> Path:
             for evidence_id in cluster.evidence_refs
             if evidence_id in observations
         ]
-        report_sections.append(render_item_dossier(datasheet, hits, cluster_observations_list))
+        report_sections.append(
+            render_item_dossier(
+                datasheet,
+                hits,
+                cluster_observations_list,
+                query_plan=_load_query_plan(store, cluster.cluster_id),
+            )
+        )
 
     report_path = store.reports_dir / "report.md"
     report_path.write_text("\n\n".join(report_sections), encoding="utf-8")
