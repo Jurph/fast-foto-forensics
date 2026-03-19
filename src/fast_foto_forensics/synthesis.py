@@ -111,6 +111,82 @@ def _strip_code_fences(raw_payload: str) -> str:
     return raw
 
 
+def _repair_json(raw: str) -> str:
+    """Best-effort repair of common LLM JSON mistakes.
+
+    Handles:
+    - Markdown code fences (delegated to _strip_code_fences)
+    - Trailing commas before } or ]
+    - Single-quoted strings (only when standard parse fails)
+    - Truncated JSON (unclosed braces/brackets)
+    """
+    import re
+
+    cleaned = _strip_code_fences(raw)
+
+    # Try parsing as-is first
+    try:
+        json.loads(cleaned)
+        return cleaned
+    except json.JSONDecodeError:
+        pass
+
+    # Remove spurious/trailing commas: ,} ,] and repeated commas like ],  ,
+    cleaned = re.sub(r",(\s*,)+", ",", cleaned)  # collapse comma runs
+    cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)  # strip trailing comma
+    try:
+        json.loads(cleaned)
+        return cleaned
+    except json.JSONDecodeError:
+        pass
+
+    # Try replacing single quotes with double quotes
+    single_quoted = cleaned.replace("'", '"')
+    try:
+        json.loads(single_quoted)
+        return single_quoted
+    except json.JSONDecodeError:
+        pass
+
+    # Try closing truncated JSON by appending missing braces/brackets
+    opens = cleaned.count("{") - cleaned.count("}")
+    closes = cleaned.count("[") - cleaned.count("]")
+    if opens > 0 or closes > 0:
+        patched = cleaned + ("]" * closes) + ("}" * opens)
+        try:
+            json.loads(patched)
+            return patched
+        except json.JSONDecodeError:
+            pass
+
+    # Give up — return the best we got so the caller gets a clear error
+    return cleaned
+
+
+def _backfill_citations(
+    data: dict[str, Any],
+    observations: list[EvidenceObservation],
+    hits: list[SearchHit],
+) -> dict[str, Any]:
+    """Ensure evidence_refs and search_hit_refs are populated.
+
+    LLMs sometimes drop citation fields even when the evidence was in the
+    prompt.  Backfilling from the actual inputs is safe — the model saw
+    exactly these items.
+    """
+    if not data.get("evidence_refs"):
+        data["evidence_refs"] = [obs.evidence_id for obs in observations]
+    if not data.get("search_hit_refs"):
+        data["search_hit_refs"] = [hit.hit_id for hit in hits]
+
+    # Clamp confidence to [0.0, 1.0]
+    conf = data.get("confidence")
+    if isinstance(conf, (int, float)):
+        data["confidence"] = max(0.0, min(1.0, float(conf)))
+
+    return data
+
+
 def _coerce_artifact(
     generated: SynthesisArtifact | str,
     backend: SynthesisBackend,
@@ -299,7 +375,12 @@ def synthesize_item_with_artifact(
     hits: list[SearchHit],
     backend: SynthesisBackend,
 ) -> tuple[ItemDatasheet, SynthesisArtifact]:
-    """Generate and validate a structured datasheet plus provenance."""
+    """Generate and validate a structured datasheet plus provenance.
+
+    On each attempt the raw payload goes through JSON repair (trailing
+    commas, code fences, truncation) and citation backfill before
+    schema validation.  Two attempts are made before giving up.
+    """
     last_artifact: SynthesisArtifact | None = None
 
     for attempt in range(1, 3):
@@ -316,8 +397,28 @@ def synthesize_item_with_artifact(
             raise SynthesisFailure(last_artifact) from exc
 
         artifact = replace(artifact, attempt_count=attempt)
+
+        # Repair common LLM output issues before validation
+        repaired = _repair_json(artifact.raw_payload)
+        if repaired != artifact.raw_payload:
+            artifact = replace(artifact, raw_payload=repaired)
+
         try:
-            datasheet = ItemDatasheet.from_json(artifact.raw_payload)
+            data = json.loads(repaired)
+        except json.JSONDecodeError as exc:
+            last_artifact = replace(
+                artifact,
+                accepted=False,
+                last_error=f"invalid JSON: {exc}",
+                attempt_count=attempt,
+            )
+            continue
+
+        # Backfill citations and clamp confidence
+        data = _backfill_citations(data, observations, hits)
+
+        try:
+            datasheet = ItemDatasheet.from_dict(data)
         except ValueError as exc:
             last_artifact = replace(
                 artifact,

@@ -11,7 +11,11 @@ from fast_foto_forensics.synthesis import (
     OllamaDatasheetSynthesisBackend,
     RemoteDatasheetSynthesisBackend,
     ReplaySynthesisBackend,
+    SynthesisFailure,
+    _backfill_citations,
+    _repair_json,
     synthesize_item,
+    synthesize_item_with_artifact,
 )
 
 
@@ -246,3 +250,150 @@ def test_remote_backend_stub_fails_fast_with_actionable_error() -> None:
 
     with pytest.raises(RuntimeError, match="not implemented"):
         backend.generate(observations=[], hits=[])
+
+
+# ---------------------------------------------------------------------------
+# JSON repair (#36)
+# ---------------------------------------------------------------------------
+
+_VALID_DATASHEET = {
+    "probable_identity": "Linksys WRT54G",
+    "object_class": "router",
+    "likely_function": "Wireless router",
+    "manufacturer": "Linksys",
+    "model_identifiers": ["WRT54G"],
+}
+
+_OBS = EvidenceObservation(
+    evidence_id="img-1",
+    source_path="rack-a/router.jpg",
+    media_kind="image",
+    sha256="abc",
+    order_index=0,
+    caption="A blue Linksys router.",
+    ocr_text="WRT54G",
+    detected_labels=["router"],
+    candidate_identifiers=["WRT54G"],
+)
+
+_HIT = SearchHit(
+    hit_id="hit-1",
+    provider="duckduckgo",
+    query="WRT54G",
+    title="Linksys WRT54G",
+    snippet="The WRT54G is a wireless router series.",
+    url="https://example.com/wrt54g",
+)
+
+
+def test_repair_json_strips_trailing_commas() -> None:
+    """Trailing commas before } or ] should be removed."""
+    raw = '{"a": 1, "b": [2, 3,],}'
+    repaired = _repair_json(raw)
+    assert json.loads(repaired) == {"a": 1, "b": [2, 3]}
+
+
+def test_repair_json_strips_code_fences() -> None:
+    """Markdown code fences should be stripped."""
+    raw = '```json\n{"a": 1}\n```'
+    repaired = _repair_json(raw)
+    assert json.loads(repaired) == {"a": 1}
+
+
+def test_repair_json_fixes_single_quotes() -> None:
+    """Single-quoted JSON should be converted to double quotes."""
+    raw = "{'a': 1, 'b': 'hello'}"
+    repaired = _repair_json(raw)
+    assert json.loads(repaired) == {"a": 1, "b": "hello"}
+
+
+def test_repair_json_closes_truncated_payload() -> None:
+    """Truncated JSON (missing closing braces) should be patched."""
+    raw = '{"a": 1, "b": [2, 3]'
+    repaired = _repair_json(raw)
+    assert json.loads(repaired) == {"a": 1, "b": [2, 3]}
+
+
+def test_repair_json_passes_valid_json_through() -> None:
+    """Valid JSON should be returned unchanged."""
+    raw = '{"a": 1}'
+    assert _repair_json(raw) == raw
+
+
+def test_backfill_citations_fills_empty_refs() -> None:
+    """Missing evidence_refs and search_hit_refs should be filled from inputs."""
+    data = dict(_VALID_DATASHEET)
+    result = _backfill_citations(data, [_OBS], [_HIT])
+    assert result["evidence_refs"] == ["img-1"]
+    assert result["search_hit_refs"] == ["hit-1"]
+
+
+def test_backfill_citations_preserves_existing_refs() -> None:
+    """Existing evidence_refs should not be overwritten."""
+    data = dict(_VALID_DATASHEET, evidence_refs=["custom-1"], search_hit_refs=["custom-2"])
+    result = _backfill_citations(data, [_OBS], [_HIT])
+    assert result["evidence_refs"] == ["custom-1"]
+    assert result["search_hit_refs"] == ["custom-2"]
+
+
+def test_backfill_citations_clamps_confidence() -> None:
+    """Confidence values outside [0, 1] should be clamped."""
+    data = dict(_VALID_DATASHEET, confidence=1.5)
+    result = _backfill_citations(data, [], [])
+    assert result["confidence"] == 1.0
+
+    data2 = dict(_VALID_DATASHEET, confidence=-0.3)
+    result2 = _backfill_citations(data2, [], [])
+    assert result2["confidence"] == 0.0
+
+
+def test_synthesize_repairs_trailing_comma_payload() -> None:
+    """A payload with trailing commas should be repaired and accepted."""
+    # Valid datasheet but with trailing commas
+    raw = json.dumps({
+        **_VALID_DATASHEET,
+        "confidence": 0.88,
+        "evidence_refs": ["img-1"],
+        "search_hit_refs": ["hit-1"],
+        "open_questions": [],
+    })
+    # Inject trailing commas
+    broken = raw.replace("],", "],  ,").replace("},", "},  ,")
+    # It shouldn't be valid JSON anymore
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(broken)
+
+    backend = ReplaySynthesisBackend(responses=[broken])
+    datasheet, artifact = synthesize_item_with_artifact([_OBS], [_HIT], backend)
+
+    assert datasheet.probable_identity == "Linksys WRT54G"
+    assert artifact.accepted is True
+    assert backend.calls == 1  # No retry needed — repair fixed it
+
+
+def test_synthesize_backfills_missing_citations() -> None:
+    """When the model omits evidence_refs, they should be backfilled."""
+    raw = json.dumps({
+        **_VALID_DATASHEET,
+        "confidence": 0.75,
+        # No evidence_refs or search_hit_refs
+    })
+
+    backend = ReplaySynthesisBackend(responses=[raw])
+    datasheet, artifact = synthesize_item_with_artifact([_OBS], [_HIT], backend)
+
+    assert datasheet.evidence_refs == ["img-1"]
+    assert datasheet.search_hit_refs == ["hit-1"]
+    assert artifact.accepted is True
+
+
+def test_synthesize_gives_up_after_two_bad_payloads() -> None:
+    """Two consecutive unparseable payloads should raise SynthesisFailure."""
+    backend = ReplaySynthesisBackend(responses=["garbage", "still garbage"])
+
+    with pytest.raises(SynthesisFailure) as exc_info:
+        synthesize_item_with_artifact([_OBS], [_HIT], backend)
+
+    assert exc_info.value.artifact.accepted is False
+    assert exc_info.value.artifact.attempt_count == 2
+    assert "invalid JSON" in (exc_info.value.artifact.last_error or "")
