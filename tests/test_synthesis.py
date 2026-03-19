@@ -11,6 +11,7 @@ from fast_foto_forensics.synthesis import (
     OllamaDatasheetSynthesisBackend,
     RemoteDatasheetSynthesisBackend,
     ReplaySynthesisBackend,
+    SynthesisError,
     SynthesisFailure,
     _backfill_citations,
     _repair_json,
@@ -244,11 +245,18 @@ def test_ollama_backend_gives_actionable_error_when_package_is_missing(
         backend.generate(observations=[], hits=[])
 
 
-def test_remote_backend_stub_fails_fast_with_actionable_error() -> None:
-    """The remote synthesis backend should exist but fail clearly until configured."""
-    backend = RemoteDatasheetSynthesisBackend(model="gpt-5.4-mini")
+def test_remote_backend_raises_on_empty_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An API response with no choices should raise SynthesisError."""
+    backend = RemoteDatasheetSynthesisBackend(
+        model="gpt-4o-mini", api_key="test-key", api_base="https://test.example.com/v1"
+    )
+    monkeypatch.setattr(
+        backend, "_call_remote", lambda msgs, fmt: {"choices": []}
+    )
 
-    with pytest.raises(RuntimeError, match="not implemented"):
+    with pytest.raises(SynthesisError, match="no choices"):
         backend.generate(observations=[], hits=[])
 
 
@@ -397,3 +405,138 @@ def test_synthesize_gives_up_after_two_bad_payloads() -> None:
     assert exc_info.value.artifact.accepted is False
     assert exc_info.value.artifact.attempt_count == 2
     assert "invalid JSON" in (exc_info.value.artifact.last_error or "")
+
+
+# ---------------------------------------------------------------------------
+# Remote synthesis backend (#35)
+# ---------------------------------------------------------------------------
+
+
+def _openai_response(content: str) -> dict:
+    """Build a minimal OpenAI-compatible chat completions response."""
+    return {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "model": "gpt-4o-mini",
+    }
+
+
+def test_remote_backend_generates_artifact_from_openai_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The remote backend should parse an OpenAI-format response into provenance."""
+    backend = RemoteDatasheetSynthesisBackend(
+        model="gpt-4o-mini", api_key="test-key", api_base="https://test.example.com/v1"
+    )
+    content = json.dumps({**_VALID_DATASHEET, "confidence": 0.9})
+    monkeypatch.setattr(backend, "_call_remote", lambda msgs, fmt: _openai_response(content))
+
+    artifact = backend.generate(observations=[_OBS], hits=[_HIT])
+
+    assert isinstance(artifact, SynthesisArtifact)
+    assert artifact.backend_name == "remote"
+    assert artifact.model_name == "gpt-4o-mini"
+    assert artifact.schema_name == "ItemDatasheet"
+    assert json.loads(artifact.raw_payload)["probable_identity"] == "Linksys WRT54G"
+
+
+def test_remote_backend_normalizes_code_fenced_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Markdown fences in the remote response should be stripped."""
+    backend = RemoteDatasheetSynthesisBackend(
+        model="gpt-4o-mini", api_key="test-key", api_base="https://test.example.com/v1"
+    )
+    fenced = "```json\n" + json.dumps(_VALID_DATASHEET) + "\n```"
+    monkeypatch.setattr(backend, "_call_remote", lambda msgs, fmt: _openai_response(fenced))
+
+    artifact = backend.generate(observations=[_OBS], hits=[_HIT])
+
+    parsed = json.loads(artifact.raw_payload)
+    assert parsed["probable_identity"] == "Linksys WRT54G"
+
+
+def test_remote_backend_raises_on_missing_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing API key should raise SynthesisError with actionable message."""
+    monkeypatch.delenv("FAST_FOTO_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    backend = RemoteDatasheetSynthesisBackend(model="gpt-4o-mini")
+
+    with pytest.raises(SynthesisError, match="API key"):
+        backend.generate(observations=[_OBS], hits=[_HIT])
+
+
+def test_remote_backend_resolves_env_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_resolve_config should pick up environment variables."""
+    monkeypatch.setenv("FAST_FOTO_API_KEY", "env-key-123")
+    monkeypatch.setenv("FAST_FOTO_API_BASE", "https://custom.example.com/v1")
+    backend = RemoteDatasheetSynthesisBackend(model="gpt-4o-mini")
+
+    base, key = backend._resolve_config()
+
+    assert base == "https://custom.example.com/v1"
+    assert key == "env-key-123"
+
+
+def test_remote_backend_prefers_explicit_args_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit constructor args should take priority over env vars."""
+    monkeypatch.setenv("FAST_FOTO_API_KEY", "env-key")
+    monkeypatch.setenv("FAST_FOTO_API_BASE", "https://env.example.com/v1")
+    backend = RemoteDatasheetSynthesisBackend(
+        model="gpt-4o-mini",
+        api_key="explicit-key",
+        api_base="https://explicit.example.com/v1",
+    )
+
+    base, key = backend._resolve_config()
+
+    assert base == "https://explicit.example.com/v1"
+    assert key == "explicit-key"
+
+
+def test_remote_backend_falls_back_to_openai_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OPENAI_API_KEY should work as a fallback when FAST_FOTO_API_KEY is unset."""
+    monkeypatch.delenv("FAST_FOTO_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-fallback-key")
+    backend = RemoteDatasheetSynthesisBackend(model="gpt-4o-mini")
+
+    _base, key = backend._resolve_config()
+
+    assert key == "openai-fallback-key"
+
+
+def test_remote_backend_end_to_end_with_repair_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The full repair/validate/retry loop should work with the remote backend."""
+    backend = RemoteDatasheetSynthesisBackend(
+        model="gpt-4o-mini", api_key="test-key", api_base="https://test.example.com/v1"
+    )
+    content = json.dumps({
+        **_VALID_DATASHEET,
+        "confidence": 0.85,
+    })
+    monkeypatch.setattr(backend, "_call_remote", lambda msgs, fmt: _openai_response(content))
+
+    datasheet, artifact = synthesize_item_with_artifact([_OBS], [_HIT], backend)
+
+    assert datasheet.probable_identity == "Linksys WRT54G"
+    assert datasheet.evidence_refs == ["img-1"]  # backfilled
+    assert datasheet.search_hit_refs == ["hit-1"]  # backfilled
+    assert artifact.accepted is True
+    assert artifact.backend_name == "remote"

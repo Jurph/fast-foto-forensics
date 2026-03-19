@@ -28,10 +28,14 @@ from pathlib import Path
 
 import pytest
 
-from fast_foto_forensics.models import EvidenceObservation, VisionResult
+from fast_foto_forensics.models import EvidenceObservation, SearchHit, VisionResult
 from fast_foto_forensics.pipeline import run_pipeline
 from fast_foto_forensics.search import DDGSSearchProvider
-from fast_foto_forensics.synthesis import HeuristicSynthesisBackend
+from fast_foto_forensics.synthesis import (
+    HeuristicSynthesisBackend,
+    OllamaDatasheetSynthesisBackend,
+    synthesize_item_with_artifact,
+)
 from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBackend
 
 _HAS_OLLAMA = importlib.util.find_spec("ollama") is not None
@@ -239,3 +243,80 @@ class TestFullPipeline:
         # see tp-link-related terms in the report
         report_lower = report_text.lower()
         assert "tp" in report_lower or "link" in report_lower or "oc200" in report_lower
+
+
+# ---------------------------------------------------------------------------
+# Ollama synthesis: does it produce a valid datasheet from evidence? (#34)
+# ---------------------------------------------------------------------------
+
+_HAS_QWEN3 = _HAS_OLLAMA  # synthesis uses qwen3:8b, assume available if ollama is
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not _HAS_QWEN3, reason="ollama package not installed")
+class TestOllamaSynthesis:
+    """Send pre-enriched evidence to Ollama synthesis and validate the result."""
+
+    def test_ollama_synthesis_produces_valid_datasheet(self) -> None:
+        """The Ollama synthesis backend should produce a valid ItemDatasheet."""
+        observations = [
+            EvidenceObservation(
+                evidence_id="synth-tplink",
+                source_path="rack-a/tp-link-OC200.jpg",
+                media_kind="image",
+                sha256="test",
+                order_index=0,
+                caption="A white TP-Link OC200 Omada hardware controller.",
+                ocr_text="TP-LINK OC200 Omada Cloud Controller",
+                detected_labels=["controller", "network", "tp-link"],
+                candidate_identifiers=["OC200"],
+                vendor="TP-Link",
+                object_class="network controller",
+            )
+        ]
+        hits = [
+            SearchHit(
+                hit_id="hit-synth-1",
+                provider="ddgs",
+                query="TP-Link OC200 specifications",
+                title="TP-Link OC200 Omada Hardware Controller",
+                snippet="The OC200 is a hardware controller for TP-Link Omada SDN.",
+                url="https://example.com/oc200",
+            )
+        ]
+        backend = OllamaDatasheetSynthesisBackend(model="qwen3:8b")
+        datasheet, artifact = synthesize_item_with_artifact(observations, hits, backend)
+
+        # Provenance
+        assert artifact.backend_name == "ollama"
+        assert artifact.model_name == "qwen3:8b"
+        assert artifact.accepted is True
+
+        # Structural: datasheet has real content
+        assert len(datasheet.probable_identity) > 3
+        assert len(datasheet.manufacturer) > 0
+        assert len(datasheet.model_identifiers) >= 1
+        assert datasheet.evidence_refs  # should include our evidence ID
+
+    def test_full_pipeline_with_ollama_synthesis(self, tmp_path: Path) -> None:
+        """The full pipeline should work with Ollama synthesis instead of heuristic."""
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        target = input_dir / _TPLINK_JPEG.name
+        if not _TPLINK_JPEG.exists():
+            pytest.skip("test JPEG not found")
+        target.symlink_to(_TPLINK_JPEG.resolve())
+
+        result = run_pipeline(
+            input_path=input_dir,
+            output_root=tmp_path / "output",
+            run_label="integ-ollama-synth",
+            vision_backend=OllamaVisionBackend(model="qwen2.5vl:7b"),
+            search_provider=DDGSSearchProvider(max_results=3),
+            synthesis_backend=OllamaDatasheetSynthesisBackend(model="qwen3:8b"),
+        )
+
+        assert result.run_dir.is_dir()
+        assert result.report_path.is_file()
+        report_text = result.report_path.read_text(encoding="utf-8")
+        assert len(report_text) > 100

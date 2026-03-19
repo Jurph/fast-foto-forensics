@@ -355,9 +355,70 @@ class OllamaDatasheetSynthesisBackend:
 
 @dataclass
 class RemoteDatasheetSynthesisBackend:
-    """Stub for future remote/frontier datasheet synthesis."""
+    """Generate ItemDatasheet payloads via an OpenAI-compatible chat API.
 
-    model: str = "gpt-5.4-mini"
+    Works with any endpoint that speaks the OpenAI ``/v1/chat/completions``
+    protocol, including OpenAI, Azure OpenAI, vLLM, and Ollama's
+    OpenAI-compatible mode.
+
+    Configuration is resolved in order:
+      1. Explicit ``api_key`` / ``api_base`` constructor arguments
+      2. ``FAST_FOTO_API_KEY`` / ``FAST_FOTO_API_BASE`` environment variables
+      3. ``OPENAI_API_KEY`` fallback for the key
+    """
+
+    model: str = "gpt-4o-mini"
+    api_base: str | None = None
+    api_key: str | None = None
+    timeout: float = 30.0
+
+    def _resolve_config(self) -> tuple[str, str]:
+        """Resolve API base URL and key from fields or environment."""
+        import os
+
+        base = (
+            self.api_base
+            or os.environ.get("FAST_FOTO_API_BASE")
+            or "https://api.openai.com/v1"
+        )
+        key = (
+            self.api_key
+            or os.environ.get("FAST_FOTO_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or ""
+        )
+        if not key:
+            raise SynthesisError(
+                "No API key configured. Set FAST_FOTO_API_KEY or "
+                "OPENAI_API_KEY, or pass api_key= to the backend."
+            )
+        return base.rstrip("/"), key
+
+    def _call_remote(
+        self,
+        messages: list[dict[str, str]],
+        response_format: dict[str, object],
+    ) -> dict[str, object]:
+        """POST to the chat completions endpoint.
+
+        Thin wrapper for monkeypatching in tests.
+        """
+        import httpx
+
+        base, key = self._resolve_config()
+        response = httpx.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={
+                "model": self.model,
+                "messages": messages,
+                "response_format": response_format,
+                "temperature": 0.2,
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()  # type: ignore[no-any-return]
 
     def generate(
         self,
@@ -365,8 +426,39 @@ class RemoteDatasheetSynthesisBackend:
         hits: list[SearchHit],
         previous_error: str | None = None,
     ) -> SynthesisArtifact:
-        raise SynthesisError(
-            "remote synthesis backend not implemented; use local Ollama synthesis for now"
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a digital forensics assistant. "
+                    "Return only structured datasheet JSON."
+                ),
+            },
+            {
+                "role": "user",
+                "content": _build_synthesis_prompt(observations, hits),
+            },
+        ]
+        response_format: dict[str, object] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "ItemDatasheet",
+                "schema": _ITEM_DATASHEET_SCHEMA,
+            },
+        }
+        payload = self._call_remote(messages, response_format)
+        choices = payload.get("choices", [])  # type: ignore[union-attr]
+        if not choices:
+            raise SynthesisError("remote API returned no choices")
+        raw_payload = _strip_code_fences(choices[0]["message"]["content"])  # type: ignore[index]
+        return SynthesisArtifact(
+            backend_name="remote",
+            model_name=self.model,
+            schema_name="ItemDatasheet",
+            raw_payload=raw_payload,
+            accepted=False,
+            attempt_count=1,
+            last_error=None,
         )
 
 

@@ -59,14 +59,26 @@ def _add_synthesis_args(parser: argparse.ArgumentParser) -> None:
         default="qwen3:8b",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--api-base",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
 
 
 def _build_synthesis_backend(args: argparse.Namespace) -> SynthesisBackend:
     """Instantiate the synthesis backend selected by CLI flags."""
     if args.synthesis_backend == "remote":
-        if args.synthesis_model == "qwen3:8b":
-            return RemoteDatasheetSynthesisBackend()
-        return RemoteDatasheetSynthesisBackend(model=args.synthesis_model)
+        return RemoteDatasheetSynthesisBackend(
+            model=args.synthesis_model if args.synthesis_model != "qwen3:8b" else "gpt-4o-mini",
+            api_base=args.api_base,
+            api_key=args.api_key,
+        )
     if args.synthesis_backend == "heuristic":
         return HeuristicSynthesisBackend()
     if args.synthesis_model == "qwen3:8b":
