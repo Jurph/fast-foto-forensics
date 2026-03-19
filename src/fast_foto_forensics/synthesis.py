@@ -203,6 +203,7 @@ def _coerce_artifact(
         accepted=False,
         attempt_count=1,
         last_error=None,
+        prompt_text=None,
     )
 
 
@@ -222,6 +223,7 @@ def _artifact_from_backend_error(
         accepted=False,
         attempt_count=attempt_count,
         last_error=str(error),
+        prompt_text=None,
     )
 
 
@@ -238,12 +240,14 @@ class ReplaySynthesisBackend:
         hits: list[SearchHit],
         previous_error: str | None = None,
     ) -> SynthesisArtifact:
+        prompt_text = _build_synthesis_prompt(observations, hits)
         response = self.responses[self.calls]
         self.calls += 1
         return SynthesisArtifact(
             backend_name="replay",
             model_name="fixture",
             schema_name="ItemDatasheet",
+            prompt_text=prompt_text,
             raw_payload=response,
             accepted=False,
             attempt_count=1,
@@ -261,6 +265,7 @@ class HeuristicSynthesisBackend:
         hits: list[SearchHit],
         previous_error: str | None = None,
     ) -> SynthesisArtifact:
+        prompt_text = _build_synthesis_prompt(observations, hits)
         identifiers = [
             item for observation in observations for item in observation.candidate_identifiers
         ]
@@ -293,6 +298,7 @@ class HeuristicSynthesisBackend:
             backend_name="heuristic",
             model_name="heuristic",
             schema_name="ItemDatasheet",
+            prompt_text=prompt_text,
             raw_payload=json.dumps(payload),
             accepted=False,
             attempt_count=1,
@@ -323,6 +329,7 @@ class OllamaDatasheetSynthesisBackend:
         hits: list[SearchHit],
         previous_error: str | None = None,
     ) -> SynthesisArtifact:
+        prompt_text = _build_synthesis_prompt(observations, hits)
         response = self._call_ollama(
             model=self.model,
             messages=[
@@ -335,7 +342,7 @@ class OllamaDatasheetSynthesisBackend:
                 },
                 {
                     "role": "user",
-                    "content": _build_synthesis_prompt(observations, hits),
+                    "content": prompt_text,
                 },
             ],
             format=_ITEM_DATASHEET_SCHEMA,
@@ -346,6 +353,7 @@ class OllamaDatasheetSynthesisBackend:
             backend_name="ollama",
             model_name=self.model,
             schema_name="ItemDatasheet",
+            prompt_text=prompt_text,
             raw_payload=raw_payload,
             accepted=False,
             attempt_count=1,

@@ -172,6 +172,7 @@ def test_synthesis_artifact_round_trips_through_dict() -> None:
         backend_name="ollama",
         model_name="qwen3:8b",
         schema_name="ItemDatasheet",
+        prompt_text="Return only structured datasheet JSON.",
         raw_payload='{"probable_identity":"WRT54G"}',
         accepted=True,
         attempt_count=1,
@@ -211,5 +212,6 @@ def test_synthesis_artifact_defaults_last_error_to_none() -> None:
     restored = SynthesisArtifact.from_dict(payload)
 
     assert restored.last_error is None
+    assert restored.prompt_text is None
     assert restored.accepted is False
     assert restored.attempt_count == 2

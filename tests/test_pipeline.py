@@ -94,6 +94,7 @@ def test_run_pipeline_creates_artifacts_report_and_sidecars() -> None:
     assert synthesis_payload["backend_name"] == "replay"
     assert synthesis_payload["model_name"] == "fixture"
     assert synthesis_payload["schema_name"] == "ItemDatasheet"
+    assert "Analyze the evidence observations and search hits" in synthesis_payload["prompt_text"]
     assert "Linksys WRT54G" in synthesis_payload["raw_payload"]
 
 

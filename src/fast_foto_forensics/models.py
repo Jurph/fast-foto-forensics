@@ -314,6 +314,7 @@ class SynthesisArtifact:
     accepted: bool
     attempt_count: int
     last_error: str | None = None
+    prompt_text: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the artifact into a JSON-friendly dictionary."""
@@ -325,6 +326,7 @@ class SynthesisArtifact:
             "accepted": self.accepted,
             "attempt_count": self.attempt_count,
             "last_error": self.last_error,
+            "prompt_text": self.prompt_text,
         }
 
     @classmethod
@@ -341,4 +343,5 @@ class SynthesisArtifact:
             accepted=accepted,
             attempt_count=int(data.get("attempt_count", 0)),
             last_error=_optional_str(data, "last_error"),
+            prompt_text=_optional_str(data, "prompt_text"),
         )
