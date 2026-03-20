@@ -3,7 +3,7 @@
 These tests are marked ``@pytest.mark.slow`` and require:
   - A running Ollama instance with the qwen2.5vl:7b model loaded
   - Network access for DDGS web search
-  - At least one test JPEG in .tmp/small-jpegs/
+  - The checked-in JPEG fixtures in tests/fixtures/small-jpegs/
 
 Run with:  pytest -m slow tests/test_integration.py -v
 
@@ -37,10 +37,10 @@ from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBacken
 _HAS_OLLAMA = importlib.util.find_spec("ollama") is not None
 _HAS_DDGS = importlib.util.find_spec("ddgs") is not None
 
-# Path to pre-converted test JPEGs (created during earlier demo runs).
+# Path to checked-in test JPEGs.
 # These are real photos of networking hardware, small enough to process
-# in a few seconds on a GPU.
-_TEST_JPEGS_DIR = Path(".tmp/small-jpegs")
+# in a few seconds on a GPU and stable enough for repeatable local runs.
+_TEST_JPEGS_DIR = Path(__file__).resolve().parent / "fixtures" / "small-jpegs"
 _TPLINK_JPEG = _TEST_JPEGS_DIR / "tp-link-OC200-and-Omada-ER605.jpg"
 _VERIZON_JPEG = _TEST_JPEGS_DIR / "Verizon FIOS G1100.jpg"
 

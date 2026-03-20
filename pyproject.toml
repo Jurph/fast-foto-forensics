@@ -20,6 +20,7 @@ fff = "fast_foto_forensics.main:main"
 [project.optional-dependencies]
 dev = [
     "mypy>=1.18.0",
+    "pillow>=11.0.0",
     "pytest>=8.4.0",
     "pytest-cov>=7.0.0",
     "ruff>=0.13.0",
