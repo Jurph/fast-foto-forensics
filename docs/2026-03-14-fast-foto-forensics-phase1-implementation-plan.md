@@ -1,5 +1,9 @@
 # Fast Foto Forensics Phase 1 Implementation Plan
 
+> **Status:** Historical implementation plan. The phase-1 CLI and tests now
+> live in `src/` and `tests/`; use the README and current source for present
+> behavior.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a local-first evidence-analysis CLI that can ingest images and scanned documents, derive reusable tags and ranked web queries, synthesize structured JSON datasheets, and render a human-readable dossier.

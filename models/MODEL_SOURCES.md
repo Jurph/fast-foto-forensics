@@ -1,9 +1,15 @@
 # Model Sources
 
-## Primary: Ollama (recommended)
+## Current Model-Backed Path
 
-The recommended way to run vision models for this project is via Ollama. No
-manual weight downloads or GPU configuration required — Ollama handles it.
+The default CLI path uses filename heuristics for vision. The model-backed path
+in the tracked code uses Ollama, both for `--vision-backend ollama` and for the
+default Ollama synthesis backend.
+
+## Ollama (recommended local runtime)
+
+The recommended way to run local models for this project is via Ollama. No
+manual weight downloads or GPU configuration required; Ollama handles it.
 
 ```bash
 ollama pull qwen2.5vl:7b
@@ -22,14 +28,21 @@ Or standalone:
 pip install ollama>=0.4.0
 ```
 
-This is the active backend for `fff run`. The raw GGUF and Florence-2 weights
-below are retained as reference for offline use or future backend experiments.
+Use Ollama with commands such as:
+
+```bash
+uv run --locked --extra dev --extra vision_ollama fast-foto-forensics scan path/to/images --vision-backend ollama
+uv run --locked --extra dev --extra search_ddgs --extra vision_ollama fast-foto-forensics run path/to/images --output runs --vision-backend ollama
+```
+
+The raw GGUF and Florence-2 notes below are reference material for alternative
+runtime experiments. The current CLI does not load those assets directly.
 
 ---
 
-Model weights on disk live on X:\models\fast-foto-forensics\ and are NOT
-checked into git. This section documents where each model came from and how
-to re-download it.
+Model weights on disk live on `X:\models\fast-foto-forensics\` and are not
+checked into git. This section documents where each model came from and how to
+re-download it.
 
 ## Florence-2-base (Microsoft)
 
@@ -39,8 +52,9 @@ to re-download it.
 - **License:** MIT
 - **Local path:** `X:\models\fast-foto-forensics\florence-2-base\`
 - **Use case:** Fast OCR with bounding-box localization. Supports `<OCR>` and
-  `<OCR_WITH_REGION>` task prompts. Runs on CPU. Good as a first-pass text detector
-  to find where serial numbers, labels, and markings appear in a photo.
+  `<OCR_WITH_REGION>` task prompts. Runs on CPU. Good as a first-pass text
+  detector to find where serial numbers, labels, and markings appear in a
+  photo.
 
 Download:
 
@@ -67,10 +81,10 @@ snapshot_download(
 - **Files needed:**
   - `Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf` (language model)
   - `mmproj-BF16.gguf` (vision encoder / multimodal projector)
-- **Use case:** High-accuracy OCR and image understanding. Instruction-tuned, so you
-  can prompt it with natural language like "extract all serial numbers from this image"
-  and get structured output. Runs via llama.cpp or llama-cpp-python. DocVQA ~95% at
-  full precision; Q4 quantization keeps quality high at a fraction of the disk/RAM cost.
+- **Use case:** High-accuracy OCR and image understanding. Instruction-tuned,
+  so you can prompt it with natural language like "extract all serial numbers
+  from this image" and get structured output. Runs via llama.cpp or
+  llama-cpp-python.
 
 Download:
 
@@ -93,8 +107,8 @@ hf_hub_download(
 "
 ```
 
-## Architecture note
+## Architecture Note
 
-Florence-2 handles fast spatial OCR (where is the text?). Qwen2.5-VL handles
-accurate extraction and interpretation (what does the text say, and what does it mean?).
-The pipeline can use Florence-2 as a cheap first pass and Qwen for deeper analysis.
+Today, the codebase uses filename heuristics by default and Ollama/Qwen for the
+explicit model-backed path. Florence-2 and standalone GGUF assets remain useful
+reference points if the repo grows a non-Ollama backend later.

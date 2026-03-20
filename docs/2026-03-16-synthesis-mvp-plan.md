@@ -1,5 +1,9 @@
 # Synthesis MVP Implementation Plan
 
+> **Status:** Historical implementation plan. The synthesis backends,
+> provenance artifacts, and CLI wiring have landed; use
+> `src/fast_foto_forensics/synthesis.py` and the README for current behavior.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace heuristic datasheet synthesis with a real Ollama-backed structured-output backend, add a remote-backend stub, and persist synthesis provenance artifacts without colliding with ongoing CLI work.

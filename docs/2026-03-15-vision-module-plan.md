@@ -1,5 +1,9 @@
 # Vision Module Implementation Plan
 
+> **Status:** Historical implementation plan. `src/fast_foto_forensics/vision.py`
+> and the related tests are implemented; use the design doc and source for
+> current behavior.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a pluggable vision module that sends evidence images to Ollama (Qwen2.5-VL 7B), parses structured JSON responses, caches results as RunStore artifacts, and enriches `EvidenceObservation` objects for downstream query planning.

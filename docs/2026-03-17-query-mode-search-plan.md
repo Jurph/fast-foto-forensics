@@ -1,5 +1,9 @@
 # Query Mode Search Planner Implementation Plan
 
+> **Status:** Historical implementation plan. Query-mode search behavior is now
+> implemented in `src/fast_foto_forensics/query_planner.py`; use the source and
+> tests for current behavior.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Teach the deterministic query planner to switch between identity, mixed, and document-seeking query modes based on the strength of extracted vendor, identifier, and function signals.

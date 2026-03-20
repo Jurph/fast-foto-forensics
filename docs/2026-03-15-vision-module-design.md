@@ -1,33 +1,32 @@
 # Vision Module Design: Image-In, Text-Out via Ollama + Qwen2.5-VL
 
-> **Status:** Approved design, revised after architecture review
+> **Status:** Implemented. This document describes the current `vision.py`
+> module.
 > **Date:** 2026-03-15
 > **Related:** `docs/2026-03-14-fast-foto-forensics-phase1-implementation-plan.md`
 
-## Goal
+## Summary
 
-Add a pluggable vision module that extracts structured text and metadata from
-evidence images. Given a photo of a piece of equipment, the module returns a
-caption, raw OCR text, candidate identifiers, vendor, object class, and
-detected labels as structured JSON fields that feed downstream into query
-planning and web search.
+`src/fast_foto_forensics/vision.py` contains the vision backend protocol, the
+concrete backends used by the repo, and the helpers that map `VisionResult`
+data back onto `EvidenceObservation`.
 
-## Architecture Decision
+The current code supports:
 
-**Approach A: Thin wrapper** - a single `vision.py` module with a `VisionBackend`
-protocol and one concrete `OllamaVisionBackend` implementation. This mirrors the
-small-protocol pattern already used by `search.py` and `synthesis.py`, while
-preserving the repo's schema-first philosophy by persisting raw `VisionResult`
-artifacts per observation.
+- `FilenameVisionBackend`
+  - default CLI vision backend
+  - derives labels and candidate identifiers from filename tokens only
+- `OllamaVisionBackend`
+  - local model-backed extraction via `ollama.chat()`
+- `StaticVisionBackend`
+  - deterministic fixture backend for tests
+- `extract_with_cache()`
+  - reads and writes per-observation `vision/<evidence_id>.json` artifacts
+- `enrich_single()` / `enrich_observations()`
+  - copy structured `VisionResult` fields back onto observations in place
 
-Alternatives considered:
-- **Split package (`vision/`):** Premature - we are still experimenting with
-  prompts and do not yet know where the complexity will land.
-- **Extend `ingest.py`:** Breaks modularity. The vision module must be callable
-  both as a pipeline stage and standalone.
-- **Mutate observations directly inside the backend:** Too much coupling. The
-  backend should return a structured result; enrichment and persistence belong
-  in `vision.py` orchestration helpers.
+The module is intentionally small and matches the protocol-driven shape already
+used by `search.py` and `synthesis.py`.
 
 ## Model Choice
 
@@ -36,15 +35,15 @@ Alternatives considered:
 - Pulled via `ollama pull qwen2.5vl:7b`
 - Accessed via `import ollama` / `ollama.chat()`
 
-**Fallback (if Qwen underperforms):** Florence-2-base
+**Reference alternative:** Florence-2-base
 - Weights on `X:\models\fast-foto-forensics\florence-2-base\`
 - Would require a separate `Florence2VisionBackend` class and post-processing
   heuristics to produce structured fields from raw OCR output
-- Not being built now; the protocol makes it easy to add later
+- The tracked CLI does not use this backend today
 
-## Module Structure
+## Current Module Structure
 
-### New file: `src/fast_foto_forensics/vision.py`
+### `src/fast_foto_forensics/vision.py`
 
 **Protocol:**
 
@@ -53,10 +52,7 @@ class VisionBackend(Protocol):
     def extract(self, observation: EvidenceObservation) -> VisionResult: ...
 ```
 
-This keeps the backend aligned with the repo's normalized evidence model rather
-than pushing the interface back down to bare filesystem paths.
-
-**Concrete backend:**
+**Model-backed backend:**
 
 ```python
 class OllamaVisionBackend:
@@ -64,24 +60,24 @@ class OllamaVisionBackend:
     def extract(self, observation: EvidenceObservation) -> VisionResult: ...
 ```
 
-- Converts `observation.source_path` to `Path`, reads the image file, and sends
-  it to Ollama via `ollama.chat()`
-- Uses a named prompt constant or small prompt-builder helper in `vision.py`
+- Reads the image file and sends it to Ollama as base64 image content
+- Uses a shared prompt constant in `vision.py`
 - Parses the response into a `VisionResult`
-- On JSON parse failure, retries once
-- On second failure, raises `VisionExtractionError` (defined in `vision.py`,
-  inherits from `RuntimeError`)
+- Retries once on JSON parse failure
+- Raises `VisionExtractionError` if the image is missing, the `ollama` package
+  is missing, or the model returns invalid JSON twice
 
-**Existing lightweight backend retained:**
+**Filename fallback backend:**
 
 ```python
 class FilenameVisionBackend:
     def extract(self, observation: EvidenceObservation) -> VisionResult: ...
 ```
 
-The current filename heuristic backend should move from `pipeline.py` into
-`vision.py` and implement the same protocol. That keeps tests and low-friction
-local runs fast while aligning all vision backends behind one contract.
+- Splits filename stems on `_` and `-`
+- Treats alphanumeric tokens as candidate identifiers
+- Treats alphabetic tokens as labels and caption text
+- Leaves `vendor` and `object_class` empty
 
 **Test backend:**
 
@@ -94,38 +90,33 @@ class StaticVisionBackend:
 Returns canned `VisionResult` objects keyed by `observation.evidence_id` for
 deterministic testing. This avoids basename collisions across folders.
 
-**Top-level functions:**
+**Top-level helpers:**
 
 ```python
 def extract_with_cache(
     observation: EvidenceObservation,
     backend: VisionBackend,
-    store: RunStore | None = None,
-    force: bool = False,
+    store: RunStore,
 ) -> VisionResult: ...
 
 def enrich_observations(
     observations: list[EvidenceObservation],
     backend: VisionBackend,
     store: RunStore | None = None,
-    force: bool = False,
-) -> tuple[list[EvidenceObservation], list[VisionResult]]: ...
+) -> list[EvidenceObservation]: ...
 
 def enrich_single(
     observation: EvidenceObservation,
-    backend: VisionBackend,
-    store: RunStore | None = None,
-    force: bool = False,
-) -> tuple[EvidenceObservation, VisionResult]: ...
+    result: VisionResult,
+) -> EvidenceObservation: ...
 ```
 
-`extract_with_cache()` is the cache boundary and cache owner.
-`enrich_observations()` iterates over observations, calls
-`extract_with_cache()` for each, and maps `VisionResult` fields onto existing
-`EvidenceObservation` fields. `enrich_single()` is the standalone entry point
-for ad-hoc use.
+`extract_with_cache()` owns the per-observation cache. `enrich_observations()`
+iterates over observations, calls `extract_with_cache()` or `backend.extract()`
+for each, and maps `VisionResult` fields onto existing `EvidenceObservation`
+objects. `enrich_single()` is the field-mapping helper.
 
-### New dataclass in `src/fast_foto_forensics/models.py`
+### `src/fast_foto_forensics/models.py`
 
 ```python
 @dataclass(slots=True)
@@ -138,86 +129,69 @@ class VisionResult:
     caption: str
     ocr_text: str
     candidate_identifiers: list[str]
+    serial_numbers: list[str]
     vendor: str | None
     object_class: str | None
     detected_labels: list[str]
-
-    def to_dict(self) -> dict[str, Any]: ...
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "VisionResult": ...
 ```
 
-`to_dict()` and `from_dict()` support JSON artifact round-tripping, matching the
-pattern used by every other dataclass in `models.py`. `evidence_id` is the
-primary per-run identity, and `source_sha256` protects against stale cache
-reuse.
-
-This is the raw output of one vision extraction. The `enrich_*` functions map it
-onto `EvidenceObservation` fields:
+This is the raw output of one vision extraction. The enrichment helpers map it
+onto `EvidenceObservation` fields as follows:
 
 | VisionResult field    | EvidenceObservation field  |
 |-----------------------|----------------------------|
 | caption               | caption                    |
 | ocr_text              | ocr_text                   |
 | candidate_identifiers | candidate_identifiers      |
-| vendor                | detected_labels (appended) |
-| object_class          | detected_labels (appended) |
-| detected_labels       | detected_labels (merged)   |
+| serial_numbers        | serial_numbers             |
+| vendor                | vendor                     |
+| object_class          | object_class               |
+| detected_labels       | detected_labels            |
 
-**Note on structured preservation:** `vendor` and `object_class` are appended
-into `detected_labels` only as a compatibility layer for today's downstream
-consumers. The authoritative structured values remain in the persisted
-`VisionResult` artifact. That keeps the current `EvidenceObservation` contract
-stable without discarding semantics too early.
+The structured fields remain on both the persisted `VisionResult` artifact and
+the enriched `EvidenceObservation`.
 
-## Prompt Template
+## Prompt Shape
 
-Stored in `vision.py` as a named constant or small prompt-builder helper. The
-exact wording will be refined through experimentation before deployment.
-Initial shape:
+`vision.py` stores a prompt constant that asks for a JSON object with:
 
 ```text
 Examine this image carefully. Return ONLY a JSON object with these fields:
 - "caption": a one-sentence description of what you see
 - "ocr_text": all visible text, transcribed exactly as it appears
-- "candidate_identifiers": list of serial numbers, model numbers, or part numbers found
+- "candidate_identifiers": list of model numbers or part numbers
+- "serial_numbers": list of serial numbers, MAC addresses, or unique IDs
 - "vendor": manufacturer name if identifiable, otherwise ""
-- "object_class": general category (e.g. "wireless router", "GPU", "circuit board")
-- "detected_labels": list of all readable labels, markings, or stickers
+- "object_class": general category
+- "detected_labels": list of readable labels, markings, or stickers
 ```
 
 ## Results Caching
 
-Vision inference is expensive. Results should be cached as per-observation
-artifacts rather than in a single mutable batch file.
+Vision inference is expensive. Results are cached as per-observation artifacts
+rather than in a single mutable batch file.
 
 **Artifact path:** `store.artifact_path(f"vision/{observation.evidence_id}.json")`
-
-**Cache ownership:** `extract_with_cache()` manages cache reads and writes. The
-backend knows nothing about caching.
 
 **Cache behavior:**
 - Before extracting, check whether the per-observation artifact exists
 - If it exists, load it via `VisionResult.from_dict()`
-- Reuse it only if `source_sha256`, `backend_name`, and `model_name` still match
-  the current observation/backend configuration
-- If it does not exist, or the metadata no longer matches, run extraction and
+- Reuse it only if `source_sha256` still matches the current observation
+- If it does not exist, or the checksum differs, run extraction and
   write the fresh result via `VisionResult.to_dict()`
-- A `--force-vision` flag (or similar) bypasses artifact reuse
-
-This matches the repo's existing `RunStore` artifact model and keeps future
-multi-worker vision queues from contending on one shared JSON file.
 
 ## Error Handling
 
-- **Ollama unavailable:** Hard fail with a clear error message ("Ollama is not
-  running or qwen2.5vl:7b is not installed"). Vision was explicitly requested;
-  silently skipping it would produce misleading results.
+- **Ollama unavailable:** `OllamaVisionBackend.extract()` raises
+  `VisionExtractionError`.
 - **Bad JSON from model:** Retry once. If the second attempt also fails to
-  parse, raise `VisionExtractionError` with the raw response for debugging.
-- **Image file unreadable:** Skip that image with a warning and continue
-  processing remaining images.
+  parse, raise `VisionExtractionError`.
+- **Batch orchestration:** `enrich_observations()` catches per-observation
+  failures, logs a warning, and leaves the failing observation unenriched so the
+  rest of the batch can continue.
+- **CLI scan path:** `scan` catches extraction failures per file, warns, and
+  skips those rows. If every image fails extraction, the command ends with
+  `No supported images found.`
 
 ## Pipeline Integration
 
@@ -225,47 +199,34 @@ The vision module sits between ingestion and query planning:
 
 ```text
 ingest_path()  ->  enrich_observations()  ->  build_query_plan()
-   (files)          (vision/Ollama)           (scoring/ranking)
+   (files)          (vision)                  (scoring/ranking)
 ```
 
-- In the `fff run` pipeline: `enrich_observations()` is called as a free
-  function after ingestion and before query planning. The pipeline passes the
-  backend instance and the current `RunStore`.
-- The pipeline should stop depending on a backend-specific `.enrich()` method in
-  `pipeline.py`. Instead, all backends implement `VisionBackend.extract(...)`
-  and `vision.py` owns the mapping step.
-- Standalone: `enrich_single()` can be called directly, or a future `fff enrich`
-  subcommand can expose it.
-
-**Note on `source_path` types:** `EvidenceObservation.source_path` is `str`.
-`vision.py` converts it to `Path` inside the module before reading the image.
+- In the `fff run` pipeline, `enrich_observations()` is called after ingestion
+  and before query planning. The pipeline passes the backend instance and the
+  current `RunStore`.
+- `scan` calls the selected backend directly so it can show raw `VisionResult`
+  fields such as `vendor`, `object_class`, and `serial_numbers`.
+- There is no standalone `fff enrich` command today.
 
 ## Dependencies
 
 - `ollama>=0.4.0` as an optional extra such as `vision_ollama`, not a required
   base dependency
 - Ollama service running locally with `qwen2.5vl:7b` pulled
-- No GPU required (Ollama handles hardware detection and image preprocessing
-  including resizing), but a GPU will significantly speed up inference
+- No GPU required, but a GPU will significantly speed up inference
 
 ## Test Strategy
 
-- Unit tests use `StaticVisionBackend` with canned fixtures - no Ollama required
-- One integration test (marked `@pytest.mark.slow` or similar) that actually
-  calls Ollama with a small test image, verifying the round-trip works
-- Test the retry-on-bad-JSON path with a backend that returns garbage on first call
-- Test the cache hit/miss logic with a temporary `RunStore` artifact path
-- Test basename collision safety explicitly with two different source paths
-  sharing the same filename
+- Unit tests use `StaticVisionBackend` with canned fixtures
+- Slow integration coverage exercises Ollama against real test images
+- Cache behavior is tested with temporary run stores
+- Batch enrichment tests cover the warning-and-continue failure mode
 
-## Files Changed or Created
+## Current Limitations
 
-| File | Action |
-|------|--------|
-| `src/fast_foto_forensics/vision.py` | Create |
-| `src/fast_foto_forensics/models.py` | Add `VisionResult` dataclass |
-| `src/fast_foto_forensics/pipeline.py` | Replace direct filename heuristics with `vision.py` orchestration |
-| `tests/test_vision.py` | Create |
-| `tests/test_pipeline.py` | Update to cover vision-backend integration |
-| `pyproject.toml` | Add optional Ollama extra |
-| `models/MODEL_SOURCES.md` | Update to reflect Ollama as primary delivery mechanism |
+- The default CLI vision backend is still filename-based for low-friction local
+  runs.
+- The model-backed path depends on the optional `vision_ollama` extra and a
+  running local Ollama service.
+- The current module does not perform region-level OCR or object detection.
