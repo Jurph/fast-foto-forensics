@@ -28,6 +28,18 @@ from fast_foto_forensics.synthesis import (
 from fast_foto_forensics.vision import FilenameVisionBackend, OllamaVisionBackend, VisionBackend
 
 
+_DEFAULT_MODEL = "qwen2.5vl:7b"
+
+
+def _add_model_arg(parser: argparse.ArgumentParser) -> None:
+    """Add the shared --model flag used by both vision and synthesis."""
+    parser.add_argument(
+        "--model",
+        default=_DEFAULT_MODEL,
+        help=f"Ollama model for vision and synthesis (default: {_DEFAULT_MODEL})",
+    )
+
+
 def _add_vision_args(parser: argparse.ArgumentParser) -> None:
     """Add shared --vision-backend and --vision-model flags to a subparser."""
     parser.add_argument(
@@ -36,13 +48,19 @@ def _add_vision_args(parser: argparse.ArgumentParser) -> None:
         default="filename",
         help="Vision backend: filename (heuristic) or ollama (real model)",
     )
-    parser.add_argument("--vision-model", default="qwen2.5vl:7b", help="Ollama model name")
+    parser.add_argument("--vision-model", default=None, help=argparse.SUPPRESS)
+
+
+def _resolve_model(args: argparse.Namespace) -> str:
+    """Return the effective Ollama model name from CLI flags."""
+    return getattr(args, "model", None) or _DEFAULT_MODEL
 
 
 def _build_vision_backend(args: argparse.Namespace) -> VisionBackend:
     """Instantiate the vision backend selected by CLI flags."""
     if args.vision_backend == "ollama":
-        return OllamaVisionBackend(model=args.vision_model)
+        model = args.vision_model or _resolve_model(args)
+        return OllamaVisionBackend(model=model)
     return FilenameVisionBackend()
 
 
@@ -54,36 +72,24 @@ def _add_synthesis_args(parser: argparse.ArgumentParser) -> None:
         default="ollama",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--synthesis-model",
-        default="qwen3:8b",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--api-base",
-        default=None,
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--api-key",
-        default=None,
-        help=argparse.SUPPRESS,
-    )
+    parser.add_argument("--synthesis-model", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--api-base", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--api-key", default=None, help=argparse.SUPPRESS)
 
 
 def _build_synthesis_backend(args: argparse.Namespace) -> SynthesisBackend:
     """Instantiate the synthesis backend selected by CLI flags."""
     if args.synthesis_backend == "remote":
+        model = args.synthesis_model or "gpt-4o-mini"
         return RemoteDatasheetSynthesisBackend(
-            model=args.synthesis_model if args.synthesis_model != "qwen3:8b" else "gpt-4o-mini",
+            model=model,
             api_base=args.api_base,
             api_key=args.api_key,
         )
     if args.synthesis_backend == "heuristic":
         return HeuristicSynthesisBackend()
-    if args.synthesis_model == "qwen3:8b":
-        return OllamaDatasheetSynthesisBackend()
-    return OllamaDatasheetSynthesisBackend(model=args.synthesis_model)
+    model = args.synthesis_model or _resolve_model(args)
+    return OllamaDatasheetSynthesisBackend(model=model)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -97,6 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scan a folder of images and print an inventory table",
     )
     scan_parser.add_argument("input_path", help="Directory (or single file) to scan")
+    _add_model_arg(scan_parser)
     _add_vision_args(scan_parser)
     scan_parser.add_argument(
         "--format",
@@ -111,6 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--output", required=True)
     run_parser.add_argument("--run-label", default="run-001")
     run_parser.add_argument("--profile", default="default")
+    _add_model_arg(run_parser)
     _add_vision_args(run_parser)
     _add_synthesis_args(run_parser)
     run_parser.add_argument(

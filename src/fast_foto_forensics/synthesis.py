@@ -304,7 +304,7 @@ class HeuristicSynthesisBackend:
 class OllamaDatasheetSynthesisBackend:
     """Generate ItemDatasheet payloads via Ollama structured-output mode."""
 
-    model: str = "qwen3:8b"
+    model: str = "qwen2.5vl:7b"
 
     def _call_ollama(self, **kwargs):
         """Thin wrapper around ollama.chat() for monkeypatching in tests."""

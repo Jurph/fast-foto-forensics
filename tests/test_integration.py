@@ -249,11 +249,8 @@ class TestFullPipeline:
 # Ollama synthesis: does it produce a valid datasheet from evidence? (#34)
 # ---------------------------------------------------------------------------
 
-_HAS_QWEN3 = _HAS_OLLAMA  # synthesis uses qwen3:8b, assume available if ollama is
-
-
 @pytest.mark.slow
-@pytest.mark.skipif(not _HAS_QWEN3, reason="ollama package not installed")
+@pytest.mark.skipif(not _HAS_OLLAMA, reason="ollama package not installed")
 class TestOllamaSynthesis:
     """Send pre-enriched evidence to Ollama synthesis and validate the result."""
 
@@ -284,12 +281,12 @@ class TestOllamaSynthesis:
                 url="https://example.com/oc200",
             )
         ]
-        backend = OllamaDatasheetSynthesisBackend(model="qwen3:8b")
+        backend = OllamaDatasheetSynthesisBackend(model="qwen2.5vl:7b")
         datasheet, artifact = synthesize_item_with_artifact(observations, hits, backend)
 
         # Provenance
         assert artifact.backend_name == "ollama"
-        assert artifact.model_name == "qwen3:8b"
+        assert artifact.model_name == "qwen2.5vl:7b"
         assert artifact.accepted is True
 
         # Structural: datasheet has real content
@@ -313,7 +310,7 @@ class TestOllamaSynthesis:
             run_label="integ-ollama-synth",
             vision_backend=OllamaVisionBackend(model="qwen2.5vl:7b"),
             search_provider=DDGSSearchProvider(max_results=3),
-            synthesis_backend=OllamaDatasheetSynthesisBackend(model="qwen3:8b"),
+            synthesis_backend=OllamaDatasheetSynthesisBackend(model="qwen2.5vl:7b"),
         )
 
         assert result.run_dir.is_dir()

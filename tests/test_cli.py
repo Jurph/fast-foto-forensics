@@ -232,7 +232,7 @@ def test_cli_run_uses_ollama_synthesis_backend_by_default() -> None:
         )
 
     assert exit_code == 0
-    synthesis_cls.assert_called_once_with()
+    synthesis_cls.assert_called_once_with(model="qwen2.5vl:7b")
 
 
 def test_cli_run_remote_backend_passes_api_config() -> None:

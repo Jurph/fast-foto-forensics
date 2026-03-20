@@ -170,7 +170,7 @@ def test_synthesis_artifact_round_trips_through_dict() -> None:
     """Synthesis artifacts should preserve provenance through artifact storage."""
     artifact = SynthesisArtifact(
         backend_name="ollama",
-        model_name="qwen3:8b",
+        model_name="qwen2.5vl:7b",
         schema_name="ItemDatasheet",
         raw_payload='{"probable_identity":"WRT54G"}',
         accepted=True,
@@ -187,7 +187,7 @@ def test_synthesis_artifact_requires_core_metadata() -> None:
     """Persisted synthesis artifacts should fail fast when identity fields are missing."""
     payload = {
         "backend_name": "ollama",
-        "model_name": "qwen3:8b",
+        "model_name": "qwen2.5vl:7b",
         "raw_payload": "{}",
         "accepted": False,
         "attempt_count": 2,
@@ -201,7 +201,7 @@ def test_synthesis_artifact_defaults_last_error_to_none() -> None:
     """Synthesis artifacts should tolerate a missing last_error field."""
     payload = {
         "backend_name": "ollama",
-        "model_name": "qwen3:8b",
+        "model_name": "qwen2.5vl:7b",
         "schema_name": "ItemDatasheet",
         "raw_payload": "{}",
         "accepted": False,

@@ -164,7 +164,7 @@ def test_ollama_backend_uses_schema_mode_and_preserves_raw_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Ollama datasheet synthesis should request schema mode and return provenance."""
-    backend = OllamaDatasheetSynthesisBackend(model="qwen3:8b")
+    backend = OllamaDatasheetSynthesisBackend(model="qwen2.5vl:7b")
     fake_chat = _make_fake_chat(
         [
             json.dumps(
@@ -215,12 +215,12 @@ def test_ollama_backend_uses_schema_mode_and_preserves_raw_payload(
 
     assert isinstance(artifact, SynthesisArtifact)
     assert artifact.backend_name == "ollama"
-    assert artifact.model_name == "qwen3:8b"
+    assert artifact.model_name == "qwen2.5vl:7b"
     assert artifact.schema_name == "ItemDatasheet"
     assert artifact.raw_payload
 
     request = fake_chat.captured_kwargs[0]
-    assert request["model"] == "qwen3:8b"
+    assert request["model"] == "qwen2.5vl:7b"
     assert request["stream"] is False
     assert isinstance(request["format"], dict)
     assert request["format"]["type"] == "object"
@@ -231,7 +231,7 @@ def test_ollama_backend_gives_actionable_error_when_package_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Missing optional dependency should tell the operator how to install it."""
-    backend = OllamaDatasheetSynthesisBackend(model="qwen3:8b")
+    backend = OllamaDatasheetSynthesisBackend(model="qwen2.5vl:7b")
 
     def fake_call_ollama(**kwargs):
         raise RuntimeError(
