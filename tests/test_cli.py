@@ -232,7 +232,47 @@ def test_cli_run_uses_ollama_synthesis_backend_by_default() -> None:
         )
 
     assert exit_code == 0
-    synthesis_cls.assert_called_once_with()
+    synthesis_cls.assert_called_once_with(model="qwen2.5vl:7b")
+
+
+def test_cli_run_remote_backend_passes_api_config() -> None:
+    """--synthesis-backend=remote should pass --api-base and --api-key through."""
+    input_dir = Path(".tmp") / "cli-remote-case"
+    output_dir = Path(".tmp") / "cli-remote-output"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (input_dir / "001-wrt54g-router.jpg").write_bytes(b"router")
+
+    with patch(
+        "fast_foto_forensics.cli.RemoteDatasheetSynthesisBackend",
+        return_value=_make_replay_synthesis_backend(),
+    ) as remote_cls:
+        exit_code = main(
+            [
+                "run",
+                str(input_dir),
+                "--output",
+                str(output_dir),
+                "--run-label",
+                "remote-demo",
+                "--offline",
+                "--synthesis-backend",
+                "remote",
+                "--synthesis-model",
+                "gpt-4o-mini",
+                "--api-base",
+                "https://custom.example.com/v1",
+                "--api-key",
+                "sk-test-key",
+            ]
+        )
+
+    assert exit_code == 0
+    remote_cls.assert_called_once_with(
+        model="gpt-4o-mini",
+        api_base="https://custom.example.com/v1",
+        api_key="sk-test-key",
+    )
 
 
 def test_cli_run_partial_failure_shows_warning(capsys) -> None:
